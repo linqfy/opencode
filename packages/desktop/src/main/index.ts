@@ -405,9 +405,13 @@ const main = Effect.gen(function* () {
     logger.log("loading task finished")
   }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)
 
-  yield* Fiber.await(loadingTask)
-
+  // Show the shell before the sidecar finishes connecting (spec section 14).
+  // The renderer fetches credentials through `await-initialization` itself, and
+  // a failed startup surfaces through the forwarded initialization error path
+  // (renderer/initialization.ts) instead of a stuck splash.
   const windows = restoreMainWindows()
+  startupMark("windows_restored")
+
   if (windows.length) {
     createMenu({
       trigger: (id) => {
@@ -422,6 +426,9 @@ const main = Effect.gen(function* () {
       },
     })
   }
+
+  startupMark("menu_created")
+  yield* Fiber.await(loadingTask)
 })
 
 Effect.runFork(main)
