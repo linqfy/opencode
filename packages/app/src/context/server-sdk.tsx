@@ -62,15 +62,27 @@ const coalescedKey = (event: QueuedServerEvent) => {
     const part = event.payload.properties.part
     return `message.part.updated:${event.directory}:${part.messageID}:${part.id}`
   }
+  if (event.payload.type === "session.updated") {
+    const info = event.payload.properties.info as { id: string }
+    return `session.updated:${event.directory}:${info.id}`
+  }
   return undefined
 }
 
+// Events after one of these must not merge with anything before it.
+const coalesceBarriers = new Set(["message.removed", "message.updated", "session.deleted"])
+
 export function enqueueServerEvent(queue: QueuedServerEvent[], event: QueuedServerEvent) {
   const key = coalescedKey(event)
-  const previous = queue[queue.length - 1]
-  if (key && previous && coalescedKey(previous) === key) {
-    queue[queue.length - 1] = event
-    return false
+  if (key) {
+    for (let index = queue.length - 1; index >= 0; index--) {
+      const existing = queue[index]
+      if (coalescedKey(existing) === key) {
+        queue[index] = event
+        return false
+      }
+      if (coalesceBarriers.has(existing.payload.type)) break
+    }
   }
   queue.push(event)
   return true

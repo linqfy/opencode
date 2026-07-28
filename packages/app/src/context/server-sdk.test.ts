@@ -193,4 +193,51 @@ describe("enqueueServerEvent", () => {
 
     expect(events).toHaveLength(2)
   })
+
+  test("dedupes adjacent session.updated events for the same session", () => {
+    const events: Array<{ directory: string; payload: Event }> = []
+    const enqueue = (slug: string) =>
+      enqueueServerEvent(events, {
+        directory: "/repo",
+        payload: { type: "session.updated", properties: { info: { id: "ses_1", slug } } } as unknown as Event,
+      })
+
+    expect(enqueue("one")).toBe(true)
+    expect(enqueue("two")).toBe(false)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.payload).toMatchObject({ properties: { info: { slug: "two" } } })
+  })
+
+  test("dedupes non-adjacent same-key events within a frame up to a barrier", () => {
+    const events: Array<{ directory: string; payload: Event }> = []
+    const enqueue = (id: string, slug: string) =>
+      enqueueServerEvent(events, {
+        directory: "/repo",
+        payload: { type: "session.updated", properties: { info: { id, slug } } } as unknown as Event,
+      })
+
+    enqueue("ses_1", "one")
+    enqueue("ses_2", "other")
+    expect(enqueue("ses_1", "two")).toBe(false)
+    expect(events).toHaveLength(2)
+    expect(events[0]?.payload).toMatchObject({ properties: { info: { id: "ses_1", slug: "two" } } })
+    expect(events[1]?.payload).toMatchObject({ properties: { info: { id: "ses_2", slug: "other" } } })
+  })
+
+  test("a barrier event blocks dedupe for the same key", () => {
+    const events: Array<{ directory: string; payload: Event }> = []
+    const enqueue = (slug: string) =>
+      enqueueServerEvent(events, {
+        directory: "/repo",
+        payload: { type: "session.updated", properties: { info: { id: "ses_1", slug } } } as unknown as Event,
+      })
+
+    enqueue("one")
+    enqueueServerEvent(events, {
+      directory: "/repo",
+      payload: { type: "message.removed", properties: { sessionID: "session", messageID: "message" } } as Event,
+    })
+    expect(enqueue("two")).toBe(true)
+    expect(events).toHaveLength(3)
+  })
 })
