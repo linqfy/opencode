@@ -49,7 +49,9 @@ import { spawnWslSidecar } from "./wsl/sidecar"
 import { migrate } from "./migrate"
 import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
+import { startupMark } from "./startup-trace"
 
+startupMark("process_start")
 const APP_NAMES: Record<string, string> = {
   dev: "OpenCode Dev",
   beta: "OpenCode Beta",
@@ -253,6 +255,7 @@ const main = Effect.gen(function* () {
   const serverReady = Deferred.makeUnsafe<ServerReadyData, unknown>()
 
   yield* Effect.promise(() => app.whenReady())
+  startupMark("app_ready")
 
   if (!TEST_ONBOARDING) migrate()
   yield* Effect.promise(() => cleanupStoreFiles(app.getPath("userData"))).pipe(
@@ -316,6 +319,7 @@ const main = Effect.gen(function* () {
 
   const loadingTask = yield* Effect.gen(function* () {
     logger.log("sidecar connection started", { version: SIDECAR_VERSION })
+    startupMark("sidecar_connect_start")
 
     ensureLoopbackNoProxy()
     useEnvProxy()
@@ -328,8 +332,10 @@ const main = Effect.gen(function* () {
         username: sidecar.username,
         password: sidecar.password,
       })
+      startupMark("credentials_ready")
 
       if (process.platform === "win32") {
+        startupMark("wsl_init_start")
         void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
       }
 
@@ -379,8 +385,10 @@ const main = Effect.gen(function* () {
       username: "opencode",
       password,
     })
+    startupMark("credentials_ready")
 
     if (process.platform === "win32") {
+      startupMark("wsl_init_start")
       void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
     }
 
@@ -393,6 +401,7 @@ const main = Effect.gen(function* () {
       ),
     )
 
+    startupMark("runtime_ready")
     logger.log("loading task finished")
   }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)
 
