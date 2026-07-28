@@ -25,6 +25,24 @@ function dataUrl(file: File, mime: string) {
   })
 }
 
+const livePreviews = new Set<string>()
+
+export function createAttachmentPreview(
+  mime: string,
+  blob: Blob,
+  createUrl: (blob: Blob) => string = URL.createObjectURL,
+): string | undefined {
+  if (!mime.startsWith("image/")) return undefined
+  const url = createUrl(blob)
+  livePreviews.add(url)
+  return url
+}
+
+export function disposeAttachmentPreview(url: string | undefined, revoke: (url: string) => void = URL.revokeObjectURL) {
+  if (!url || !livePreviews.delete(url)) return
+  revoke(url)
+}
+
 type PromptTarget = Pick<ReturnType<ReturnType<typeof usePrompt>["capture"]>, "current" | "cursor" | "set">
 type AttachmentTarget = { prompt: PromptTarget; cursor: number | undefined }
 
@@ -75,6 +93,7 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
       sourcePath: input.getPathForFile?.(file) || undefined,
       mime,
       dataUrl: url,
+      previewUrl: createAttachmentPreview(mime, file),
     }
     target.prompt.set([...target.prompt.current(), attachment], target.cursor)
     return true
@@ -103,6 +122,9 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
   const removeAttachment = (id: string) => {
     const target = input.capture()
     const current = target.current()
+    for (const part of current) {
+      if (part.type === "image" && part.id === id) disposeAttachmentPreview(part.previewUrl)
+    }
     const next = current.filter((part) => part.type !== "image" || part.id !== id)
     target.set(next, target.cursor())
   }
