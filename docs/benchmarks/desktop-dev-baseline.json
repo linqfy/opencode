@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-07-28T22:52:51.259Z",
+  "mode": "preview",
+  "reference_machine": "see environment.json",
+  "files": [
+    "traces/run-1.jsonl",
+    "traces/run-2.jsonl",
+    "traces/run-3.jsonl",
+    "traces/run-4.jsonl",
+    "traces/run-5.jsonl"
+  ],
+  "summary": {
+    "process_start": {
+      "runs": 5,
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "app_ready": {
+      "runs": 5,
+      "p50": 197,
+      "p95": 208,
+      "max": 208
+    },
+    "sidecar_connect_start": {
+      "runs": 5,
+      "p50": 287,
+      "p95": 306,
+      "max": 306
+    },
+    "credentials_ready": {
+      "runs": 5,
+      "p50": 2912,
+      "p95": 2923,
+      "max": 2923
+    },
+    "wsl_init_start": {
+      "runs": 5,
+      "p50": 2913,
+      "p95": 2924,
+      "max": 2924
+    },
+    "runtime_ready": {
+      "runs": 5,
+      "p50": 3067,
+      "p95": 3072,
+      "max": 3072
+    }
+  }
+}
