@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { initializationData, initializationReady } from "./initialization"
+import { initializationData, initializationReady, shellReady } from "./initialization"
 
 describe("desktop renderer initialization", () => {
   test("throws the original initialization error before rendering server providers", () => {
@@ -69,5 +69,25 @@ describe("desktop renderer initialization", () => {
       ),
     ).toBe(false)
     expect(reads).toBe(0)
+  })
+
+  test("shell is ready without waiting for WSL enumeration", () => {
+    expect(
+      shellReady({
+        sidecar: { loading: false },
+        defaultServer: { loading: false },
+        windowCount: { loading: false },
+        locale: { loading: false },
+      }),
+    ).toBe(true)
+  })
+
+  test.each([
+    ["sidecar", { sidecar: { loading: true }, defaultServer: { loading: false }, windowCount: { loading: false }, locale: { loading: false } }],
+    ["defaultServer", { sidecar: { loading: false }, defaultServer: { loading: true }, windowCount: { loading: false }, locale: { loading: false } }],
+    ["windowCount", { sidecar: { loading: false }, defaultServer: { loading: false }, windowCount: { loading: true }, locale: { loading: false } }],
+    ["locale", { sidecar: { loading: false }, defaultServer: { loading: false }, windowCount: { loading: false }, locale: { loading: true } }],
+  ])("shell waits for %s", (_name, state) => {
+    expect(shellReady(state)).toBe(false)
   })
 })

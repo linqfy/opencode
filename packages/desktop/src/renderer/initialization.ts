@@ -20,3 +20,19 @@ export function initializationReady<A>(state: (() => A | undefined) & { error: u
   initializationData(state)
   return true
 }
+
+export type ShellReadinessState = {
+  sidecar: { loading: boolean }
+  defaultServer: { loading: boolean }
+  windowCount: { loading: boolean }
+  locale: { loading: boolean }
+}
+
+// The shell must not wait for WSL enumeration (spec section 14): app content
+// renders once credentials, server default, window count, and locale are known;
+// WSL servers appear in the server list when their data arrives.
+export function shellReady(state: ShellReadinessState) {
+  return (
+    !state.sidecar.loading && !state.defaultServer.loading && !state.windowCount.loading && !state.locale.loading
+  )
+}
