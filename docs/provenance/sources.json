@@ -1,0 +1,37 @@
+[
+  {
+    "id": "opencode",
+    "repo_path": "../opencode",
+    "remote_url": "https://github.com/sst/opencode.git",
+    "branch": "dev",
+    "pinned_commit": "a45c2b917e657e50881117e8c3f85f4bff06e47d",
+    "license_spdx": "MIT",
+    "license_file": "LICENSE",
+    "notice_file": null,
+    "authorization_ref": null
+  },
+  {
+    "id": "claude-code",
+    "repo_path": "../claude-code",
+    "remote_url": null,
+    "branch": "main",
+    "pinned_commit": "6f6f12b37f529488b10e53928dd5508bb93535c7",
+    "history_available": false,
+    "pinned_commit_observed_at": "2026-07-28",
+    "license_spdx": null,
+    "license_file": null,
+    "notice_file": null,
+    "authorization_ref": null
+  },
+  {
+    "id": "codex",
+    "repo_path": "../codex",
+    "remote_url": "https://github.com/openai/codex.git",
+    "branch": "main",
+    "pinned_commit": "9ea975a2dc88d039512313da3e332013e8bd911e",
+    "license_spdx": "Apache-2.0",
+    "license_file": "LICENSE",
+    "notice_file": "NOTICE",
+    "authorization_ref": null
+  }
+]
