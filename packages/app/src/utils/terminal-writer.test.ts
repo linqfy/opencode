@@ -1,64 +1,38 @@
 import { describe, expect, test } from "bun:test"
-import { terminalWriter } from "./terminal-writer"
+import { makeFrameScheduler, terminalWriter } from "./terminal-writer"
 
-describe("terminalWriter", () => {
-  test("buffers and flushes once per schedule", () => {
-    const calls: string[] = []
-    const scheduled: VoidFunction[] = []
+describe("terminalWriter thresholds", () => {
+  test("flushes immediately when buffered bytes reach maxPendingBytes", () => {
+    const written: string[] = []
+    const writer = terminalWriter((data, done) => { written.push(data); done?.() }, { maxPendingBytes: 8 })
+    writer.push("12345")
+    expect(written).toEqual([])
+    writer.push("678")
+    expect(written).toEqual(["12345678"])
+  })
+
+  test("batches small writes into the scheduled frame", () => {
+    const written: string[] = []
+    const frames: (() => void)[] = []
     const writer = terminalWriter(
-      (data, done) => {
-        calls.push(data)
-        done?.()
-      },
-      (flush) => scheduled.push(flush),
+      (data, done) => { written.push(data); done?.() },
+      { schedule: (fn) => frames.push(fn), maxPendingBytes: 1024 },
     )
-
     writer.push("a")
     writer.push("b")
-    writer.push("c")
-
-    expect(calls).toEqual([])
-    expect(scheduled).toHaveLength(1)
-
-    scheduled[0]?.()
-    expect(calls).toEqual(["abc"])
+    expect(written).toEqual([])
+    expect(frames.length).toBe(1)
+    frames[0]()
+    expect(written).toEqual(["ab"])
   })
 
-  test("flush is a no-op when empty", () => {
-    const calls: string[] = []
-    const writer = terminalWriter(
-      (data, done) => {
-        calls.push(data)
-        done?.()
-      },
-      (flush) => flush(),
-    )
-    writer.flush()
-    expect(calls).toEqual([])
-  })
-
-  test("flush waits for pending write completion", () => {
-    const calls: string[] = []
-    let done: VoidFunction | undefined
-    const writer = terminalWriter(
-      (data, finish) => {
-        calls.push(data)
-        done = finish
-      },
-      (flush) => flush(),
-    )
-
-    writer.push("a")
-
-    let settled = false
-    writer.flush(() => {
-      settled = true
-    })
-
-    expect(calls).toEqual(["a"])
-    expect(settled).toBe(false)
-
-    done?.()
-    expect(settled).toBe(true)
+  test("frame scheduler fires the flush once per window", async () => {
+    let calls = 0
+    const schedule = makeFrameScheduler(10)
+    schedule(() => calls++)
+    schedule(() => calls++)
+    expect(calls).toBe(0)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(calls).toBe(1)
   })
 })

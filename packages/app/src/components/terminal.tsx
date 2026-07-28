@@ -15,7 +15,7 @@ import { useServerSDK } from "@/context/server-sdk"
 import { terminalFontFamily, useSettings } from "@/context/settings"
 import type { LocalPTY } from "@/context/terminal"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
-import { terminalWriter } from "@/utils/terminal-writer"
+import { makeFrameScheduler, terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
 
 const TOGGLE_TERMINAL_ID = "terminal.toggle"
@@ -414,10 +414,12 @@ export const Terminal = (props: TerminalProps) => {
       _ghostty = g
       term = t
       setOptionIfSupported(t, "colorScheme", theme.mode() === "dark" ? "dark" : "light")
-      output = terminalWriter((data, done) =>
-        t.write(data, () => {
-          done?.()
-        }),
+      output = terminalWriter(
+        (data, done) =>
+          t.write(data, () => {
+            done?.()
+          }),
+        { schedule: makeFrameScheduler(16) },
       )
 
       t.attachCustomKeyEventHandler((event) => {
