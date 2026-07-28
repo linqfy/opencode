@@ -2,7 +2,7 @@
   {
     "id": "opencode",
     "repo_path": "../opencode",
-    "remote_url": "https://github.com/sst/opencode.git",
+    "remote_url": "https://github.com/linqfy/opencode.git",
     "branch": "dev",
     "pinned_commit": "a45c2b917e657e50881117e8c3f85f4bff06e47d",
     "license_spdx": "MIT",
