@@ -1,4 +1,4 @@
-import type { CompactionCheckpoint } from "@ultracode/context"
+import type { Planner } from "@ultracode/context"
 
 const CHECKPOINT_FIELDS = [
   "objective", "completed", "constraints", "decisions", "workingSet", "facts",
@@ -30,7 +30,7 @@ const extractJson = (text: string): string => {
 }
 
 // Parses a typed checkpoint from model output; undefined if unparseable.
-export const parseCheckpoint = (text: string): CompactionCheckpoint | undefined => {
+export const parseCheckpoint = (text: string): Planner.CompactionCheckpoint | undefined => {
   try {
     const parsed = JSON.parse(extractJson(text))
     if (typeof parsed !== "object" || parsed === null || typeof parsed.objective !== "string") return undefined
@@ -59,14 +59,14 @@ export const parseCheckpoint = (text: string): CompactionCheckpoint | undefined 
 
 // A minimal checkpoint used when the model output cannot be parsed: the raw
 // summary becomes the objective. Compaction must never fail on a parse error.
-export const fallbackCheckpoint = (rawSummary: string): CompactionCheckpoint => ({
+export const fallbackCheckpoint = (rawSummary: string): Planner.CompactionCheckpoint => ({
   objective: rawSummary,
   completed: [], constraints: [], decisions: [], workingSet: [], facts: [],
   toolArtifacts: [], tests: [], errors: [], pending: [], approvalState: [], agentLineage: [],
 })
 
 // Serializes a checkpoint to the summary string carried by Compaction.Ended.
-export const serializeCheckpoint = (checkpoint: CompactionCheckpoint): string => {
+export const serializeCheckpoint = (checkpoint: Planner.CompactionCheckpoint): string => {
   const lines: string[] = [`## Objective`, checkpoint.objective]
   const section = (title: string, items: readonly string[]) => {
     if (items.length === 0) return

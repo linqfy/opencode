@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { toPlannerMessages } from "../src/session/compaction-adapter"
-import type { PlannerMessage } from "@ultracode/context"
 
 // Minimal SessionMessage-shaped fixtures (only the fields the adapter reads).
 const user = (id: string, text: string) => ({ id, type: "user", text, time: { created: 0 } })

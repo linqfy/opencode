@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { checkpointPrompt, parseCheckpoint, serializeCheckpoint } from "../src/session/compaction-summarize"
-import type { CompactionCheckpoint } from "@ultracode/context"
+import type { Planner } from "@ultracode/context"
 
 describe("parseCheckpoint", () => {
   test("parses a valid JSON checkpoint", () => {
@@ -22,7 +22,7 @@ describe("parseCheckpoint", () => {
 
 describe("serializeCheckpoint", () => {
   test("renders a stable summary string containing the objective and pending work", () => {
-    const checkpoint: CompactionCheckpoint = {
+    const checkpoint: Planner.CompactionCheckpoint = {
       objective: "build the feature", completed: ["scaffold"], constraints: ["no deps"], decisions: [], workingSet: [],
       facts: [], toolArtifacts: [], tests: [], errors: [], pending: ["wire it"], approvalState: [], agentLineage: [],
     }
