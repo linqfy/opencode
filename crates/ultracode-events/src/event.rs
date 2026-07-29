@@ -126,6 +126,23 @@ pub enum EventKind {
         turn: u32,
         reason: String,
     },
+    /// An OpenCode session imported from a legacy database (spec §18 Stage 2).
+    LegacySessionImported {
+        original_session_id: String,
+        title: String,
+        directory: String,
+        message_count: u64,
+        source: String,
+    },
+    /// One OpenCode message imported from a legacy database. `data` is the
+    /// raw OpenCode session_message.data JSON text, carried opaquely.
+    LegacyMessageImported {
+        original_session_id: String,
+        original_message_id: String,
+        seq: u64,
+        message_type: String,
+        data: String,
+    },
     /// Internal line written as the final line of a sealed segment at rotation.
     SegmentSeal {
         sealed_events: u64,
@@ -271,5 +288,32 @@ mod tests {
         assert_eq!(hash_from_hex(&hash_hex(&h)).unwrap(), h);
         assert!(hash_from_hex("zz").is_err());
         assert!(hash_from_hex("ab").is_err());
+    }
+
+    #[test]
+    fn legacy_event_kinds_round_trip() {
+        let session_kind = EventKind::LegacySessionImported {
+            original_session_id: "ses_abc".into(),
+            title: "Imported session".into(),
+            directory: "/projects/x".into(),
+            message_count: 3,
+            source: "opencode.db".into(),
+        };
+        let json = serde_json::to_string(&session_kind).unwrap();
+        assert!(json.contains("\"kind\":\"legacy-session-imported\""));
+        let back: EventKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, session_kind);
+
+        let message_kind = EventKind::LegacyMessageImported {
+            original_session_id: "ses_abc".into(),
+            original_message_id: "msg_1".into(),
+            seq: 1,
+            message_type: "assistant".into(),
+            data: "{\"content\":[]}".into(),
+        };
+        let json = serde_json::to_string(&message_kind).unwrap();
+        assert!(json.contains("\"kind\":\"legacy-message-imported\""));
+        let back: EventKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, message_kind);
     }
 }
