@@ -8,3 +8,4 @@ pub mod event;
 pub mod journal;
 pub mod projections;
 pub mod recovery;
+pub mod rpc;
