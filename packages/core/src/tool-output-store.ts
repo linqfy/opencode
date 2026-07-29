@@ -126,12 +126,21 @@ const layer = Layer.effect(
       return { maxLines: configured.max_lines ?? MAX_LINES, maxBytes: configured.max_bytes ?? MAX_BYTES }
     })
 
-    const write = Effect.fn("ToolOutputStore.write")(function* (content: string) {
-      const file = path.join(directory, `tool_${Identifier.ascending()}`)
+    const write = Effect.fn("ToolOutputStore.write")(function* (content: string, hash: string) {
+      const file = path.join(directory, hash)
       yield* fs.ensureDir(directory).pipe(Effect.mapError((cause) => new StorageError({ operation: "write", cause })))
+      // Content-addressed by sha256: identical output shares one file (dedup).
+      // The exclusive-create flag makes a concurrent identical write a benign
+      // no-op (AlreadyExists); any other write failure still surfaces.
       yield* fs
         .writeFileString(file, content, { flag: "wx" })
-        .pipe(Effect.mapError((cause) => new StorageError({ operation: "write", cause })))
+        .pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.void,
+          ),
+          Effect.mapError((cause) => new StorageError({ operation: "write", cause })),
+        )
       return file
     })
 
@@ -155,8 +164,9 @@ const layer = Layer.effect(
           outputPaths: [],
         }
 
-      const outputPath = yield* write(contextual)
-      const marker = `... output truncated; full content saved to ${outputPath}; sha256: ${new Bun.CryptoHasher("sha256").update(contextual).digest("hex")}; bytes: ${Buffer.byteLength(contextual, "utf-8")}; lines: ${lineCount(contextual)} ...`
+      const hash = new Bun.CryptoHasher("sha256").update(contextual).digest("hex")
+      const outputPath = yield* write(contextual, hash)
+      const marker = `... output truncated; full content saved to ${outputPath}; sha256: ${hash}; bytes: ${Buffer.byteLength(contextual, "utf-8")}; lines: ${lineCount(contextual)} ...`
 
       return {
         output: {
@@ -177,7 +187,7 @@ const layer = Layer.effect(
       const entries = yield* fs.readDirectory(directory).pipe(Effect.catch(() => Effect.succeed([])))
       const cutoff = Date.now() - Duration.toMillis(RETENTION)
       for (const entry of entries) {
-        if (!entry.startsWith("tool_")) continue
+        if (!entry.startsWith("tool_") && !/^[0-9a-f]{64}$/.test(entry)) continue
         const file = path.join(directory, entry)
         const info = yield* fs.stat(file).pipe(Effect.catch(() => Effect.void))
         const modified = info?.mtime.pipe(

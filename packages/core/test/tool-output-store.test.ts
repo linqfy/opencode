@@ -227,6 +227,26 @@ describe("ToolOutputStore", () => {
     ),
   )
 
+  it.live("content-addresses identical oversized outputs while separating different content", () =>
+    withStore(({ store }) =>
+      Effect.gen(function* () {
+        const identical = "x\n".repeat(3_000)
+        const different = "y\n".repeat(3_000)
+        const output = (text: string) => ({ structured: {}, content: [{ type: "text" as const, text }] })
+
+        const first = yield* store.bound({ sessionID, toolCallID: "call-dedup-first", output: output(identical) })
+        const second = yield* store.bound({ sessionID, toolCallID: "call-dedup-second", output: output(identical) })
+        const third = yield* store.bound({ sessionID, toolCallID: "call-dedup-different", output: output(different) })
+
+        expect(first.outputPaths).toHaveLength(1)
+        expect(second.outputPaths).toHaveLength(1)
+        expect(third.outputPaths).toHaveLength(1)
+        expect(first.outputPaths[0]).toBe(second.outputPaths[0])
+        expect(first.outputPaths[0]).not.toBe(third.outputPaths[0])
+      }),
+    ),
+  )
+
   it.live("cleans expired managed files and preserves unrelated files", () =>
     withStore(({ root, store, fs }) =>
       Effect.gen(function* () {
