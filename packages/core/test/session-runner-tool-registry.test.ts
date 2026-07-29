@@ -59,6 +59,55 @@ const make = (permission?: string) => {
 }
 
 describe("ToolRegistry", () => {
+  it.effect("materializes canonical tool metadata", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({
+        deploy: Tool.make({
+          namespace: "cloud",
+          stateChanging: true,
+          concurrencySafe: false,
+          description: "Deploy the current service",
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
+          execute: ({ text }) => Effect.succeed({ text }),
+          toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
+        }),
+      })
+
+      expect((yield* toolDefinitions(service))[0]?.metadata).toEqual({
+        namespace: "cloud",
+        stateChanging: true,
+        concurrencySafe: false,
+      })
+    }),
+  )
+
+  it.effect("defers non-matching tools and exposes search_tools", () =>
+    Effect.gen(function* () {
+      const service = yield* ToolRegistry.Service
+      yield* service.register({
+        deploy: Tool.make({
+          description: "Deploy a cloud service",
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
+          execute: ({ text }) => Effect.succeed({ text }),
+        }),
+        glob: Tool.make({
+          description: "Find source files matching a glob pattern",
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
+          execute: ({ text }) => Effect.succeed({ text }),
+        }),
+      })
+
+      expect((yield* service.materialize(undefined, "search source files")).definitions.map((tool) => tool.name)).toEqual([
+        "glob",
+        "search_tools",
+      ])
+    }),
+  )
+
   it.effect("filters disabled tools with edit aliases and ordered wildcard precedence", () =>
     Effect.gen(function* () {
       const service = yield* ToolRegistry.Service

@@ -1077,7 +1077,7 @@ const layer = Layer.effect(
       throw new Error("Impossible")
     })
 
-    const runLoop: (sessionID: SessionID) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.run")(
+    const runLoop = Effect.fn("SessionPrompt.run")(
       function* (sessionID: SessionID) {
         const ctx = yield* InstanceState.context
         let structured: unknown
@@ -1272,7 +1272,7 @@ const layer = Layer.effect(
               mcpInstructions: mcpInstructions,
               skills: skills,
               format: format,
-              agentInstructions: agent.instructions,
+              agentInstructions: agent.prompt,
             })
             const result = yield* handle.process({
               user: lastUser,

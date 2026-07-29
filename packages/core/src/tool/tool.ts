@@ -22,6 +22,9 @@ export interface Definition<Input extends SchemaType<any>, Output extends Schema
     readonly _Input: Input
     readonly _Output: Output
   }
+  readonly namespace: string
+  readonly stateChanging: boolean
+  readonly concurrencySafe: boolean
 }
 
 export type AnyTool = Definition<any, any>
@@ -42,6 +45,9 @@ type Config<
   Output extends SchemaType<any>,
   Structured extends SchemaType<any> = Output,
 > = {
+  readonly namespace?: string
+  readonly stateChanging?: boolean
+  readonly concurrencySafe?: boolean
   readonly description: string
   readonly input: Input
   readonly output: Output
@@ -73,7 +79,11 @@ export function make<
   Output extends SchemaType<any>,
   Structured extends SchemaType<any> = Output,
 >(config: Config<Input, Output, Structured>): Definition<Input, Structured> {
-  const tool = Object.freeze({}) as Definition<Input, Structured>
+  const tool = Object.freeze({
+    namespace: config.namespace ?? "core",
+    stateChanging: config.stateChanging ?? false,
+    concurrencySafe: config.concurrencySafe ?? false,
+  }) as Definition<Input, Structured>
   const definitions = new Map<string, ToolDefinition>()
   runtimes.set(tool, {
     definition: (name) => {
@@ -84,6 +94,11 @@ export function make<
         description: config.description,
         inputSchema: toJsonSchema(config.input),
         outputSchema: toJsonSchema(config.structured ?? config.output),
+        metadata: {
+          namespace: tool.namespace,
+          stateChanging: tool.stateChanging,
+          concurrencySafe: tool.concurrencySafe,
+        },
       })
       definitions.set(name, definition)
       return definition
@@ -140,7 +155,11 @@ export const withPermission = <Input extends SchemaType<any>, Output extends Sch
   tool: Definition<Input, Output>,
   permission: string,
 ) => {
-  const decorated = Object.freeze({}) as Definition<Input, Output>
+  const decorated = Object.freeze({
+    namespace: tool.namespace,
+    stateChanging: tool.stateChanging,
+    concurrencySafe: tool.concurrencySafe,
+  }) as Definition<Input, Output>
   runtimes.set(decorated, { ...runtimeOf(tool), permission })
   return decorated
 }

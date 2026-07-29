@@ -66,6 +66,8 @@ describe("ToolOutputStore", () => {
         expect(yield* fs.readFileString(result.outputPaths[0])).toBe(first + second)
         if (result.output.content[0]?.type !== "text") throw new Error("expected text preview")
         expect(Buffer.byteLength(result.output.content[0].text)).toBeLessThanOrEqual(ToolOutputStore.MAX_BYTES)
+        expect(result.output.content[0].text).toContain("sha256:")
+        expect(result.output.content[0].text).toContain("bytes: 60010")
       }),
     ),
   )

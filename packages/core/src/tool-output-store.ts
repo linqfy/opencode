@@ -156,7 +156,7 @@ const layer = Layer.effect(
         }
 
       const outputPath = yield* write(contextual)
-      const marker = `... output truncated; full content saved to ${outputPath} ...`
+      const marker = `... output truncated; full content saved to ${outputPath}; sha256: ${new Bun.CryptoHasher("sha256").update(contextual).digest("hex")}; bytes: ${Buffer.byteLength(contextual, "utf-8")}; lines: ${lineCount(contextual)} ...`
 
       return {
         output: {

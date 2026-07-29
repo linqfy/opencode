@@ -1,7 +1,7 @@
 export * as ToolRegistry from "./registry"
 
 import { ToolOutput, type ToolCall, type ToolDefinition, type ToolResultValue } from "@opencode-ai/llm"
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer, Schema, Scope } from "effect"
 import { AgentV2 } from "../agent"
 import { PermissionV2 } from "../permission"
 import { SessionMessage } from "../session/message"
@@ -9,7 +9,8 @@ import { SessionSchema } from "../session/schema"
 import { ToolOutputStore } from "../tool-output-store"
 import { Wildcard } from "../util/wildcard"
 import { ApplicationTools } from "./application-tools"
-import { definition, permission, settle, validateName, type AnyTool, type RegistrationError } from "./tool"
+import { definition, make, permission, settle, validateName, type AnyTool, type RegistrationError } from "./tool"
+import { ToolDiscovery } from "./discovery"
 import { Tools } from "./tools"
 import { makeLocationNode } from "../effect/app-node"
 
@@ -21,7 +22,7 @@ export type ExecuteInput = {
 }
 
 export interface Interface {
-  readonly materialize: (permissions?: PermissionV2.Ruleset) => Effect.Effect<Materialization>
+  readonly materialize: (permissions?: PermissionV2.Ruleset, query?: string) => Effect.Effect<Materialization>
   /** Internal registration capability exposed publicly only through Tools.Service. */
   readonly register: (tools: Readonly<Record<string, AnyTool>>) => Effect.Effect<void, RegistrationError, Scope.Scope>
 }
@@ -38,6 +39,8 @@ export interface Settlement {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/ToolRegistry") {}
+
+const DEFERRED_TOOL_LIMIT = 5
 
 const registryLayer = Layer.effect(
   Service,
@@ -103,7 +106,7 @@ const registryLayer = Layer.effect(
           }),
         )
       }),
-      materialize: Effect.fn("ToolRegistry.materialize")(function* (permissions = []) {
+      materialize: Effect.fn("ToolRegistry.materialize")(function* (permissions = [], query) {
         const registrations = new Map(applications.entries())
         for (const [name, entries] of local) {
           const registration = entries.at(-1)?.registration
@@ -111,10 +114,53 @@ const registryLayer = Layer.effect(
         }
         for (const [name, registration] of registrations)
           if (whollyDisabled(permission(registration.tool, name), permissions)) registrations.delete(name)
+        const selected =
+          query === undefined
+            ? registrations
+            : new Map(
+                ToolDiscovery.search(
+                  query,
+                  new Map(Array.from(registrations, ([name, registration]) => [name, registration.tool])),
+                )
+                  .slice(0, DEFERRED_TOOL_LIMIT)
+                  .map((result) => [result.name, registrations.get(result.name)!]),
+              )
+        const search = make({
+          namespace: "system",
+          concurrencySafe: true,
+          description: "Find tools that are available but not currently loaded. Call this before using a tool you need but cannot see.",
+          input: Schema.Struct({ query: Schema.String.annotate({ description: "What the tool should help accomplish" }) }),
+          output: Schema.Array(
+            Schema.Struct({
+              name: Schema.String,
+              namespace: Schema.String,
+              description: Schema.String,
+            }),
+          ),
+          execute: ({ query }) =>
+            Effect.sync(() =>
+              ToolDiscovery.search(
+                query,
+                new Map(Array.from(registrations, ([name, registration]) => [name, registration.tool])),
+              )
+                .slice(0, DEFERRED_TOOL_LIMIT)
+                .map((result) => {
+                  const tool = definition(result.name, result.tool)
+                  return { name: result.name, namespace: result.tool.namespace, description: tool.description }
+                }),
+            ),
+          toModelOutput: ({ output }) => [
+            {
+              type: "text",
+              text: output.length === 0 ? "No matching tools found." : output.map((tool) => tool.name + ": " + tool.description).join("\n"),
+            },
+          ],
+        })
+        if (query !== undefined) selected.set("search_tools", { identity: {}, tool: search })
         return {
-          definitions: Array.from(registrations, ([name, registration]) => definition(name, registration.tool)),
+          definitions: Array.from(selected, ([name, registration]) => definition(name, registration.tool)),
           settle: (input) => {
-            const registration = registrations.get(input.call.name)
+            const registration = selected.get(input.call.name)
             if (registration) return settleWith(input, registration.identity)
             return Effect.succeed({ result: { type: "error", value: `Unknown tool: ${input.call.name}` } })
           },
