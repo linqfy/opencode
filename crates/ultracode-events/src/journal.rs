@@ -1,4 +1,7 @@
-use crate::event::{hash_hex, new_event_id, now_ms, hash_from_hex, Event, EventKind, Record, GENESIS_HASH, SCHEMA_VERSION};
+use crate::event::{
+    hash_from_hex, hash_hex, new_event_id, now_ms, Event, EventKind, Record, GENESIS_HASH,
+    SCHEMA_VERSION,
+};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -50,9 +53,16 @@ impl JournalWriter {
         Self::create_with_segment_limit(dir, session, DEFAULT_MAX_SEGMENT_BYTES)
     }
 
-    pub fn create_with_segment_limit(dir: &Path, session: &str, max_segment_bytes: u64) -> io::Result<Self> {
+    pub fn create_with_segment_limit(
+        dir: &Path,
+        session: &str,
+        max_segment_bytes: u64,
+    ) -> io::Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let file = OpenOptions::new().create(true).append(true).open(segment_path(dir, 0))?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(segment_path(dir, 0))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             session: session.to_string(),
@@ -76,7 +86,10 @@ impl JournalWriter {
         segment_events: u64,
         max_segment_bytes: u64,
     ) -> io::Result<Self> {
-        let file = OpenOptions::new().create(true).append(true).open(segment_path(&dir, segment_index))?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(segment_path(&dir, segment_index))?;
         Ok(Self {
             dir,
             session,
@@ -187,8 +200,18 @@ mod tests {
         let dir = dir("chain");
         let _ = std::fs::remove_dir_all(&dir);
         let mut journal = JournalWriter::create(&dir, "ses_1").unwrap();
-        let r1 = journal.append(EventKind::SessionStarted { client: "test".into(), client_version: "0".into() }, None).unwrap();
-        let r2 = journal.append(EventKind::TurnStarted { turn: 1 }, Some("cmd_a".into())).unwrap();
+        let r1 = journal
+            .append(
+                EventKind::SessionStarted {
+                    client: "test".into(),
+                    client_version: "0".into(),
+                },
+                None,
+            )
+            .unwrap();
+        let r2 = journal
+            .append(EventKind::TurnStarted { turn: 1 }, Some("cmd_a".into()))
+            .unwrap();
         assert_eq!(r1.prev, hash_hex(&GENESIS_HASH));
         assert_eq!(r2.prev, r1.hash);
         assert_eq!(r2.event.seq, 2);
@@ -203,11 +226,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let mut journal = JournalWriter::create(&dir, "ses_1").unwrap();
         for turn in 1..=3 {
-            journal.append(EventKind::TurnStarted { turn }, None).unwrap();
+            journal
+                .append(EventKind::TurnStarted { turn }, None)
+                .unwrap();
         }
         journal.commit_boundary().unwrap();
         let content = std::fs::read_to_string(segment_path(&dir, 0)).unwrap();
-        let lines: Vec<Record> = content.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let lines: Vec<Record> = content
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         assert_eq!(lines.len(), 3);
         for line in &lines {
             assert!(verify_record(line));
@@ -223,7 +251,11 @@ mod tests {
         for i in 0..6 {
             journal
                 .append(
-                    EventKind::ProviderAttemptCompleted { attempt: i, finish_reason: "stop".into(), usage: None },
+                    EventKind::ProviderAttemptCompleted {
+                        attempt: i,
+                        finish_reason: "stop".into(),
+                        usage: None,
+                    },
                     None,
                 )
                 .unwrap();

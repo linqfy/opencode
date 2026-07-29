@@ -21,7 +21,11 @@ pub struct CommitLog {
 impl CommitLog {
     /// Fresh journal.
     pub fn create(dir: &Path, session: &str) -> io::Result<Self> {
-        Ok(Self { journal: JournalWriter::create(dir, session)?, keys: HashMap::new(), last_record: None })
+        Ok(Self {
+            journal: JournalWriter::create(dir, session)?,
+            keys: HashMap::new(),
+            last_record: None,
+        })
     }
 
     /// Reopen with sidecar-restart semantics (spec §11 availability model):
@@ -29,7 +33,11 @@ impl CommitLog {
     pub fn open(dir: &Path, session: &str) -> Result<Self, RecoveryError> {
         let opened = recovery::open(dir, session)?;
         let keys = opened.idempotency_keys.into_iter().collect();
-        Ok(Self { journal: opened.writer, keys, last_record: None })
+        Ok(Self {
+            journal: opened.writer,
+            keys,
+            last_record: None,
+        })
     }
 
     /// One idempotent command → one committed event, ever. The returned record
@@ -68,7 +76,10 @@ fn lookup_marker(seq: u64) -> Record {
             ts: 0,
             session: String::new(),
             cmd: None,
-            kind: EventKind::SegmentSeal { sealed_events: 0, final_hash: String::new() },
+            kind: EventKind::SegmentSeal {
+                sealed_events: 0,
+                final_hash: String::new(),
+            },
         },
         prev: String::new(),
         hash: String::new(),
@@ -90,27 +101,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let mut log = CommitLog::create(&dir, "ses_1").unwrap();
         let first = log
-            .propose("cmd_x", EventKind::SideEffectPrepared {
-                idempotency_key: "cmd_x".into(),
-                tool: "deploy".into(),
-                request_hash: "h".into(),
-                reconciliation_policy: "never-retry".into(),
-            })
+            .propose(
+                "cmd_x",
+                EventKind::SideEffectPrepared {
+                    idempotency_key: "cmd_x".into(),
+                    tool: "deploy".into(),
+                    request_hash: "h".into(),
+                    reconciliation_policy: "never-retry".into(),
+                },
+            )
             .unwrap();
         let second = log
-            .propose("cmd_x", EventKind::SideEffectPrepared {
-                idempotency_key: "cmd_x".into(),
-                tool: "deploy".into(),
-                request_hash: "h".into(),
-                reconciliation_policy: "never-retry".into(),
-            })
+            .propose(
+                "cmd_x",
+                EventKind::SideEffectPrepared {
+                    idempotency_key: "cmd_x".into(),
+                    tool: "deploy".into(),
+                    request_hash: "h".into(),
+                    reconciliation_policy: "never-retry".into(),
+                },
+            )
             .unwrap();
         match (first, second) {
-            (CommitOutcome::Committed(a), CommitOutcome::Duplicate(b)) => assert_eq!(a.event.seq, b.event.seq),
+            (CommitOutcome::Committed(a), CommitOutcome::Duplicate(b)) => {
+                assert_eq!(a.event.seq, b.event.seq)
+            }
             _ => panic!("first must commit, second must be duplicate"),
         }
         let content = std::fs::read_to_string(crate::journal::segment_path(&dir, 0)).unwrap();
-        assert_eq!(content.lines().count(), 1, "duplicate must not append a second line");
+        assert_eq!(
+            content.lines().count(),
+            1,
+            "duplicate must not append a second line"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -119,11 +142,13 @@ mod tests {
         let dir = dir("reopen");
         let _ = std::fs::remove_dir_all(&dir);
         let mut log = CommitLog::create(&dir, "ses_1").unwrap();
-        log.propose("cmd_x", EventKind::TurnStarted { turn: 1 }).unwrap();
+        log.propose("cmd_x", EventKind::TurnStarted { turn: 1 })
+            .unwrap();
         drop(log);
         // Sidecar restart: dedup must survive without any sidecar state file.
         let mut log = CommitLog::open(&dir, "ses_1").unwrap();
-        log.propose("cmd_x", EventKind::TurnStarted { turn: 1 }).unwrap();
+        log.propose("cmd_x", EventKind::TurnStarted { turn: 1 })
+            .unwrap();
         let content = std::fs::read_to_string(crate::journal::segment_path(&dir, 0)).unwrap();
         assert_eq!(content.lines().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);

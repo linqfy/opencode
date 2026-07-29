@@ -10,15 +10,26 @@ pub enum RecoveryError {
     Io(io::Error),
     /// A hash-chain or parse failure before the final record. History is
     /// never silently rewritten (spec); operator intervention required.
-    CorruptHistory { segment: u32, line: u64, reason: String },
+    CorruptHistory {
+        segment: u32,
+        line: u64,
+        reason: String,
+    },
 }
 
 impl fmt::Display for RecoveryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RecoveryError::Io(e) => write!(f, "io error: {e}"),
-            RecoveryError::CorruptHistory { segment, line, reason } => {
-                write!(f, "corrupt journal history at segment {segment} line {line}: {reason}")
+            RecoveryError::CorruptHistory {
+                segment,
+                line,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "corrupt journal history at segment {segment} line {line}: {reason}"
+                )
             }
         }
     }
@@ -45,7 +56,11 @@ fn segment_files(dir: &Path) -> Vec<PathBuf> {
         Ok(entries) => entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("segment-") && n.ends_with(".jsonl")))
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("segment-") && n.ends_with(".jsonl"))
+            })
             .collect(),
         Err(_) => return vec![],
     };
@@ -58,8 +73,13 @@ fn segment_files(dir: &Path) -> Vec<PathBuf> {
 pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
     let files = segment_files(dir);
     if files.is_empty() {
-        let writer = JournalWriter::create_with_segment_limit(dir, session, DEFAULT_MAX_SEGMENT_BYTES)?;
-        return Ok(OpenedJournal { writer, truncated_tail: None, idempotency_keys: vec![] });
+        let writer =
+            JournalWriter::create_with_segment_limit(dir, session, DEFAULT_MAX_SEGMENT_BYTES)?;
+        return Ok(OpenedJournal {
+            writer,
+            truncated_tail: None,
+            idempotency_keys: vec![],
+        });
     }
 
     let mut seq = 0u64;
@@ -75,7 +95,10 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
             .and_then(|n| n.strip_prefix("segment-"))
             .and_then(|n| n.strip_suffix(".jsonl"))
             .and_then(|n| n.parse().ok())
-            .ok_or(io::Error::new(io::ErrorKind::InvalidData, "bad segment name"))?;
+            .ok_or(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad segment name",
+            ))?;
         let reader = BufReader::new(std::fs::File::open(file)?);
         let mut offset = 0u64;
         let mut line_no = 0u64;
@@ -98,29 +121,48 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
 
             if !valid {
                 let reason = match &parsed {
-                    Ok(record) if record.event.seq != seq + 1 => format!("sequence gap: expected {}, got {}", seq + 1, record.event.seq),
+                    Ok(record) if record.event.seq != seq + 1 => format!(
+                        "sequence gap: expected {}, got {}",
+                        seq + 1,
+                        record.event.seq
+                    ),
                     Ok(_) => "hash mismatch".to_string(),
                     Err(e) => format!("json parse: {e}"),
                 };
                 // Truncatable ONLY if this is the final record of the final segment.
                 let is_final_record = is_last_segment && {
-                    let remaining: io::Result<Vec<String>> = io::BufRead::lines(reader_lines_after(file, offset + line_len)?).collect();
-                    remaining.map(|rest| rest.iter().all(|l| l.trim().is_empty())).unwrap_or(false)
+                    let remaining: io::Result<Vec<String>> =
+                        io::BufRead::lines(reader_lines_after(file, offset + line_len)?).collect();
+                    remaining
+                        .map(|rest| rest.iter().all(|l| l.trim().is_empty()))
+                        .unwrap_or(false)
                 };
                 if !is_final_record {
-                    return Err(RecoveryError::CorruptHistory { segment: segment_index, line: line_no, reason });
+                    return Err(RecoveryError::CorruptHistory {
+                        segment: segment_index,
+                        line: line_no,
+                        reason,
+                    });
                 }
                 truncate_at = Some((file.clone(), offset));
                 truncated_tail = Some(line.clone());
                 break 'outer;
             }
 
-            let record = parsed.map_err(|e| RecoveryError::CorruptHistory { segment: segment_index, line: line_no, reason: e.to_string() })?;
+            let record = parsed.map_err(|e| RecoveryError::CorruptHistory {
+                segment: segment_index,
+                line: line_no,
+                reason: e.to_string(),
+            })?;
             if let Some(cmd) = &record.event.cmd {
                 keys.retain(|(k, _)| k != cmd);
                 keys.push((cmd.clone(), record.event.seq));
             }
-            prev = hash_from_hex(&record.hash).map_err(|reason| RecoveryError::CorruptHistory { segment: segment_index, line: line_no, reason })?;
+            prev = hash_from_hex(&record.hash).map_err(|reason| RecoveryError::CorruptHistory {
+                segment: segment_index,
+                line: line_no,
+                reason,
+            })?;
             seq = record.event.seq;
             offset += line_len;
         }
@@ -150,7 +192,11 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
         segment_events,
         DEFAULT_MAX_SEGMENT_BYTES,
     )?;
-    Ok(OpenedJournal { writer, truncated_tail, idempotency_keys: keys })
+    Ok(OpenedJournal {
+        writer,
+        truncated_tail,
+        idempotency_keys: keys,
+    })
 }
 
 fn reader_lines_after(path: &Path, byte_offset: u64) -> io::Result<Box<dyn BufRead>> {
@@ -170,7 +216,8 @@ fn count_lines_excluding_seal(path: &Path) -> io::Result<u64> {
         if line.trim().is_empty() {
             continue;
         }
-        let record: Record = serde_json::from_str(line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        let record: Record = serde_json::from_str(line)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         if !matches!(record.event.kind, EventKind::SegmentSeal { .. }) {
             count += 1;
         }
@@ -191,9 +238,18 @@ mod tests {
 
     fn write_three(dir: &Path) -> JournalWriter {
         let mut j = JournalWriter::create_with_segment_limit(dir, "ses_1", 1 << 20).unwrap();
-        j.append(EventKind::SessionStarted { client: "t".into(), client_version: "0".into() }, Some("cmd_a".into())).unwrap();
-        j.append(EventKind::TurnStarted { turn: 1 }, Some("cmd_b".into())).unwrap();
-        j.append(EventKind::TurnCompleted { turn: 1 }, None).unwrap();
+        j.append(
+            EventKind::SessionStarted {
+                client: "t".into(),
+                client_version: "0".into(),
+            },
+            Some("cmd_a".into()),
+        )
+        .unwrap();
+        j.append(EventKind::TurnStarted { turn: 1 }, Some("cmd_b".into()))
+            .unwrap();
+        j.append(EventKind::TurnCompleted { turn: 1 }, None)
+            .unwrap();
         j.commit_boundary().unwrap();
         j
     }
@@ -204,13 +260,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         drop(write_three(&dir));
         let opened = open(&dir, "ses_1").unwrap();
-        assert_eq!(opened.idempotency_keys, vec![("cmd_a".to_string(), 1), ("cmd_b".to_string(), 2)]);
+        assert_eq!(
+            opened.idempotency_keys,
+            vec![("cmd_a".to_string(), 1), ("cmd_b".to_string(), 2)]
+        );
         let mut writer = opened.writer;
-        writer.append(EventKind::TurnAborted { turn: 1, reason: "x".into() }, None).unwrap();
+        writer
+            .append(
+                EventKind::TurnAborted {
+                    turn: 1,
+                    reason: "x".into(),
+                },
+                None,
+            )
+            .unwrap();
         drop(writer);
         let opened = open(&dir, "ses_1").unwrap();
         let mut writer = opened.writer;
-        let next = writer.append(EventKind::TurnStarted { turn: 2 }, None).unwrap();
+        let next = writer
+            .append(EventKind::TurnStarted { turn: 2 }, None)
+            .unwrap();
         assert_eq!(next.event.seq, 5);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -227,17 +296,27 @@ mod tests {
         let final_line = lines.last_mut().unwrap();
         let marker = "\"hash\":\"";
         let start = final_line.find(marker).unwrap() + marker.len();
-        let replacement = if &final_line[start..start + 2] == "00" { "ff" } else { "00" };
+        let replacement = if &final_line[start..start + 2] == "00" {
+            "ff"
+        } else {
+            "00"
+        };
         final_line.replace_range(start..start + 2, replacement);
         let corrupted = lines.join("\n") + "\n";
-        let mut f = OpenOptions::new().write(true).truncate(true).open(&path).unwrap();
+        let mut f = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
         f.write_all(corrupted.as_bytes()).unwrap();
         f.sync_data().unwrap();
         drop(f);
 
         let opened = open(&dir, "ses_1").unwrap();
         let mut writer = opened.writer;
-        let next = writer.append(EventKind::TurnStarted { turn: 9 }, None).unwrap();
+        let next = writer
+            .append(EventKind::TurnStarted { turn: 9 }, None)
+            .unwrap();
         assert_eq!(next.event.seq, 3, "truncated to two good events");
         let _ = std::fs::remove_dir_all(&dir);
     }

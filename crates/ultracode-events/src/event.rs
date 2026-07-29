@@ -25,31 +25,112 @@ pub fn new_event_id() -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
 pub enum EventKind {
-    SessionStarted { client: String, client_version: String },
-    TurnStarted { turn: u32 },
-    UserInputCommitted { parts: Vec<BTreeMap<String, serde_json::Value>> },
-    ContextPlanned { fingerprint: String, estimated_tokens: u64 },
-    PromptCompiled { fingerprint: String, blocks: Vec<String> },
-    ProviderAttemptStarted { attempt: u32, family: String, model: String, request_fingerprint: String },
-    ProviderAttemptCompleted { attempt: u32, finish_reason: String, usage: Option<BTreeMap<String, u64>> },
-    ToolProposed { tool: String, call_id: String },
-    ApprovalResolved { call_id: String, verdict: String, rule: String },
-    ToolStarted { call_id: String, tool: String },
-    SideEffectPrepared { idempotency_key: String, tool: String, request_hash: String, reconciliation_policy: String },
-    SideEffectDispatched { idempotency_key: String, dispatch_identity: String },
-    SideEffectObserved { idempotency_key: String, outcome_hash: String, external_reference: Option<String> },
-    SideEffectOutcomeUnknown { idempotency_key: String, reason: String },
-    ToolResultCommitted { call_id: String, status: String, preview_len: u64, artifact_ids: Vec<String> },
-    ArtifactStored { artifact_id: String, mime: String, byte_length: u64, hash: String },
-    SemanticCheckpointCreated { checkpoint_hash: String, recent_tail_start_id: String },
-    AgentSpawned { agent_id: String, parent_agent_id: Option<String>, budget: u64 },
-    AgentStateChanged { agent_id: String, state: String },
-    WorkspaceSnapshotCreated { snapshot_id: String, baseline_id: String },
-    AssistantMessageCommitted { message_id: String, parts: u32 },
-    TurnCompleted { turn: u32 },
-    TurnAborted { turn: u32, reason: String },
+    SessionStarted {
+        client: String,
+        client_version: String,
+    },
+    TurnStarted {
+        turn: u32,
+    },
+    UserInputCommitted {
+        parts: Vec<BTreeMap<String, serde_json::Value>>,
+    },
+    ContextPlanned {
+        fingerprint: String,
+        estimated_tokens: u64,
+    },
+    PromptCompiled {
+        fingerprint: String,
+        blocks: Vec<String>,
+    },
+    ProviderAttemptStarted {
+        attempt: u32,
+        family: String,
+        model: String,
+        request_fingerprint: String,
+    },
+    ProviderAttemptCompleted {
+        attempt: u32,
+        finish_reason: String,
+        usage: Option<BTreeMap<String, u64>>,
+    },
+    ToolProposed {
+        tool: String,
+        call_id: String,
+    },
+    ApprovalResolved {
+        call_id: String,
+        verdict: String,
+        rule: String,
+    },
+    ToolStarted {
+        call_id: String,
+        tool: String,
+    },
+    SideEffectPrepared {
+        idempotency_key: String,
+        tool: String,
+        request_hash: String,
+        reconciliation_policy: String,
+    },
+    SideEffectDispatched {
+        idempotency_key: String,
+        dispatch_identity: String,
+    },
+    SideEffectObserved {
+        idempotency_key: String,
+        outcome_hash: String,
+        external_reference: Option<String>,
+    },
+    SideEffectOutcomeUnknown {
+        idempotency_key: String,
+        reason: String,
+    },
+    ToolResultCommitted {
+        call_id: String,
+        status: String,
+        preview_len: u64,
+        artifact_ids: Vec<String>,
+    },
+    ArtifactStored {
+        artifact_id: String,
+        mime: String,
+        byte_length: u64,
+        hash: String,
+    },
+    SemanticCheckpointCreated {
+        checkpoint_hash: String,
+        recent_tail_start_id: String,
+    },
+    AgentSpawned {
+        agent_id: String,
+        parent_agent_id: Option<String>,
+        budget: u64,
+    },
+    AgentStateChanged {
+        agent_id: String,
+        state: String,
+    },
+    WorkspaceSnapshotCreated {
+        snapshot_id: String,
+        baseline_id: String,
+    },
+    AssistantMessageCommitted {
+        message_id: String,
+        parts: u32,
+    },
+    TurnCompleted {
+        turn: u32,
+    },
+    TurnAborted {
+        turn: u32,
+        reason: String,
+    },
     /// Internal line written as the final line of a sealed segment at rotation.
-    SegmentSeal { sealed_events: u64, final_hash: String },
+    SegmentSeal {
+        sealed_events: u64,
+        final_hash: String,
+    },
 }
 
 /// One unsigned journal record; the hash of this is the chain link.
@@ -111,7 +192,10 @@ mod tests {
         assert_ne!(a, b);
         let counter_a = a.split('-').nth(1).unwrap();
         let counter_b = b.split('-').nth(1).unwrap();
-        assert!(u64::from_str_radix(counter_b, 16).unwrap() > u64::from_str_radix(counter_a, 16).unwrap());
+        assert!(
+            u64::from_str_radix(counter_b, 16).unwrap()
+                > u64::from_str_radix(counter_a, 16).unwrap()
+        );
         assert_eq!(a.split('-').count(), 3);
     }
 
@@ -132,7 +216,10 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"kind\":\"side-effect-prepared\""), "got: {json}");
+        assert!(
+            json.contains("\"kind\":\"side-effect-prepared\""),
+            "got: {json}"
+        );
     }
 
     #[test]
@@ -152,7 +239,10 @@ mod tests {
             cmd: None,
             kind: EventKind::UserInputCommitted { parts },
         };
-        assert_eq!(make(vec![a]).canonical_bytes().unwrap(), make(vec![b]).canonical_bytes().unwrap());
+        assert_eq!(
+            make(vec![a]).canonical_bytes().unwrap(),
+            make(vec![b]).canonical_bytes().unwrap()
+        );
     }
 
     #[test]
