@@ -302,4 +302,58 @@ mod tests {
         let nr = record("k", ReconciliationPolicy::NeverRetry, EffectState::Prepared);
         assert_eq!(reconcile_decision(&nr, false), ReconcileAction::RequireUserDecision);
     }
+
+    #[test]
+    fn reconcile_after_a_simulated_crash() {
+        // Write three effects, then "crash" (drop the writer without a clean
+        // shutdown marker) leaving them in non-terminal states.
+        let dir = dir("crash");
+        let _ = std::fs::remove_dir_all(&dir);
+        {
+            let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
+            // idempotent, dispatched, no observed outcome -> Retry
+            j.append(prepared("idem", "idempotent"), Some("idem".into())).unwrap();
+            j.append(EventKind::SideEffectDispatched { idempotency_key: "idem".into(), dispatch_identity: "d".into() }, None).unwrap();
+            // queryable, prepared only -> QueryExternal (unclean)
+            j.append(prepared("query", "queryable"), Some("query".into())).unwrap();
+            // never-retry, dispatched -> RequireUserDecision
+            j.append(prepared("irreversible", "never-retry"), Some("irreversible".into())).unwrap();
+            j.append(EventKind::SideEffectDispatched { idempotency_key: "irreversible".into(), dispatch_identity: "d2".into() }, None).unwrap();
+            j.commit_boundary().unwrap();
+            // dropped here = unclean stop
+        }
+
+        // Restart: reopen the journal and reconcile as after an unclean stop.
+        let opened = crate::recovery::open(&dir, "ses_1").unwrap();
+        let effects = fold_effects(&opened.records);
+        let pending = pending_effects(&effects);
+        assert_eq!(pending.len(), 3, "all three effects are non-terminal after the crash");
+
+        let by_key = |k: &str| effects.iter().find(|e| e.idempotency_key == k).unwrap();
+        assert_eq!(reconcile_decision(by_key("idem"), true), ReconcileAction::Retry);
+        assert_eq!(reconcile_decision(by_key("query"), true), ReconcileAction::QueryExternal);
+        assert_eq!(reconcile_decision(by_key("irreversible"), true), ReconcileAction::RequireUserDecision);
+
+        // None of them is a model-visible success.
+        assert!(pending.iter().all(|e| !is_observed(e)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_completed_effect_is_not_pending_after_restart() {
+        let dir = dir("completed");
+        let _ = std::fs::remove_dir_all(&dir);
+        {
+            let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
+            j.append(prepared("done", "idempotent"), Some("done".into())).unwrap();
+            j.append(EventKind::SideEffectDispatched { idempotency_key: "done".into(), dispatch_identity: "d".into() }, None).unwrap();
+            j.append(EventKind::SideEffectObserved { idempotency_key: "done".into(), outcome_hash: "o".into(), external_reference: None }, None).unwrap();
+            j.commit_boundary().unwrap();
+        }
+        let opened = crate::recovery::open(&dir, "ses_1").unwrap();
+        let effects = fold_effects(&opened.records);
+        assert!(pending_effects(&effects).is_empty(), "observed effect needs no reconciliation");
+        assert_eq!(reconcile_decision(&effects[0], true), ReconcileAction::NoAction);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
