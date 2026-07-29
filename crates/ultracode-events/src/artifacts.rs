@@ -260,6 +260,76 @@ impl ArtifactStore {
         }
         Ok(bytes[start..end].to_vec())
     }
+
+    /// Raises an artifact's retention class and/or expiry. Pinned artifacts
+    /// are never evicted.
+    pub fn retain(
+        &mut self,
+        artifact_id: &str,
+        requester_scope: &str,
+        retention: Retention,
+        expires_at: Option<u64>,
+    ) -> io::Result<bool> {
+        if self.stat(artifact_id, requester_scope)?.is_none() {
+            return Ok(false);
+        }
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE artifact_meta SET retention = ?2, expires_at = ?3 WHERE artifact_id = ?1",
+                params![artifact_id, retention.as_str(), expires_at.map(|v| v as i64)],
+            )
+            .map_err(io::Error::other)?;
+        Ok(changed > 0)
+    }
+
+    /// Decrements the reference count (floored at zero).
+    pub fn release(&mut self, artifact_id: &str, requester_scope: &str) -> io::Result<bool> {
+        if self.stat(artifact_id, requester_scope)?.is_none() {
+            return Ok(false);
+        }
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE artifact_meta SET ref_count = MAX(ref_count - 1, 0) WHERE artifact_id = ?1",
+                params![artifact_id],
+            )
+            .map_err(io::Error::other)?;
+        Ok(changed > 0)
+    }
+
+    /// Evicts artifacts that are expired, unreferenced, and not pinned.
+    /// Returns the number of artifacts removed.
+    pub fn evict_expired(&mut self, now: u64) -> io::Result<usize> {
+        let expired: Vec<(String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT artifact_id, credential_class FROM artifact_meta
+                     WHERE retention != 'pinned' AND ref_count <= 0 AND expires_at IS NOT NULL AND expires_at < ?1",
+                )
+                .map_err(io::Error::other)?;
+            let rows = stmt
+                .query_map(params![now as i64], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(io::Error::other)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(io::Error::other)?
+        };
+
+        let mut removed = 0usize;
+        for (artifact_id, credential_class) in expired {
+            if credential_class != CredentialClass::NoPersist.as_str() {
+                let path = self.blob_path(&artifact_id);
+                if path.exists() {
+                    fs::remove_file(&path)?;
+                }
+            }
+            self.conn
+                .execute("DELETE FROM artifact_meta WHERE artifact_id = ?1", params![artifact_id])
+                .map_err(io::Error::other)?;
+            removed += 1;
+        }
+        Ok(removed)
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +399,43 @@ mod tests {
         assert_eq!(meta.credential_class, CredentialClass::NoPersist);
         let err = store.open_range(&reference.artifact_id, "ses_1", 0, 7).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[test]
+    fn eviction_removes_only_expired_unreferenced_non_pinned() {
+        let (root, db) = dirs("evict");
+        let mut store = ArtifactStore::open(&root, &db).unwrap();
+        // expired + unreferenced -> evicted
+        let expired = store.put(b"old", "text/plain", "ses_1", Retention::Turn, CredentialClass::Plain, Some(100)).unwrap();
+        store.release(&expired.artifact_id, "ses_1").unwrap();
+        // expired but still referenced -> kept
+        let referenced = store.put(b"held", "text/plain", "ses_1", Retention::Turn, CredentialClass::Plain, Some(100)).unwrap();
+        // expired + unreferenced but pinned -> kept
+        let pinned = store.put(b"pin", "text/plain", "ses_1", Retention::Pinned, CredentialClass::Plain, Some(100)).unwrap();
+        store.release(&pinned.artifact_id, "ses_1").unwrap();
+        store.retain(&pinned.artifact_id, "ses_1", Retention::Pinned, Some(100)).unwrap();
+        // not expired -> kept
+        let fresh = store.put(b"new", "text/plain", "ses_1", Retention::Session, CredentialClass::Plain, Some(10_000)).unwrap();
+
+        let removed = store.evict_expired(200).unwrap();
+        assert_eq!(removed, 1, "only the expired unreferenced non-pinned artifact is removed");
+        assert!(store.stat(&expired.artifact_id, "ses_1").unwrap().is_none());
+        assert!(store.stat(&referenced.artifact_id, "ses_1").unwrap().is_some());
+        assert!(store.stat(&pinned.artifact_id, "ses_1").unwrap().is_some());
+        assert!(store.stat(&fresh.artifact_id, "ses_1").unwrap().is_some());
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[test]
+    fn release_floors_at_zero() {
+        let (root, db) = dirs("floor");
+        let mut store = ArtifactStore::open(&root, &db).unwrap();
+        let reference = store.put(b"x", "text/plain", "ses_1", Retention::Workspace, CredentialClass::Plain, None).unwrap();
+        store.release(&reference.artifact_id, "ses_1").unwrap();
+        store.release(&reference.artifact_id, "ses_1").unwrap();
+        let meta = store.stat(&reference.artifact_id, "ses_1").unwrap().unwrap();
+        assert_eq!(meta.ref_count, 0);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 }
