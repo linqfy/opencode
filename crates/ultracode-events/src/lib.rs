@@ -3,6 +3,7 @@
 
 pub mod artifacts;
 pub mod commit;
+pub mod effect;
 pub mod event;
 pub mod journal;
 pub mod projections;
