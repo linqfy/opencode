@@ -205,4 +205,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&jdir);
         let _ = std::fs::remove_dir_all(&dbdir);
     }
+
+    #[test]
+    fn projections_and_artifacts_survive_a_reopen() {
+        use crate::artifacts::{ArtifactStore, CredentialClass, Retention};
+        use crate::commit::CommitLog;
+
+        let base = std::env::temp_dir().join(format!("ultracode-integ-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let jdir = base.join("journal");
+        let blobs = base.join("blobs");
+        let db = base.join("proj.db");
+
+        // First "session": commit events + store an artifact.
+        {
+            let mut log = CommitLog::create(&jdir, "ses_1").unwrap();
+            log.propose("cmd_a", EventKind::SessionStarted { client: "t".into(), client_version: "0".into() }).unwrap();
+            log.propose("cmd_b", EventKind::TurnStarted { turn: 1 }).unwrap();
+            let mut artifacts = ArtifactStore::open(&blobs, &db).unwrap();
+            let reference = artifacts.put(b"tool output", "text/plain", "ses_1", Retention::Session, CredentialClass::Plain, None).unwrap();
+            log.propose(
+                "cmd_c",
+                EventKind::ArtifactStored {
+                    artifact_id: reference.artifact_id.clone(),
+                    mime: "text/plain".into(),
+                    byte_length: reference.byte_length,
+                    hash: reference.hash.clone(),
+                },
+            )
+            .unwrap();
+        }
+
+        // Reopen (simulating a sidecar restart) and rebuild projections.
+        let mut store = ProjectionStore::open(&db).unwrap();
+        let n = store.rebuild(&jdir, "ses_1").unwrap();
+        assert_eq!(n, 3);
+        let kinds: Vec<String> = store.list_events("ses_1", 0, 10).unwrap().into_iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec!["session-started", "turn-started", "artifact-stored"]);
+
+        // The artifact bytes are still readable after the restart.
+        let artifacts = ArtifactStore::open(&blobs, &db).unwrap();
+        let events = store.list_events("ses_1", 0, 10).unwrap();
+        let artifact_event = events.iter().find(|e| e.kind == "artifact-stored").unwrap();
+        // Recover the artifact id from the journal record via a fresh read.
+        let opened = recovery::open(&jdir, "ses_1").unwrap();
+        let stored = opened
+            .records
+            .iter()
+            .find(|r| matches!(r.event.kind, crate::event::EventKind::ArtifactStored { .. }))
+            .unwrap();
+        let artifact_id = match &stored.event.kind {
+            crate::event::EventKind::ArtifactStored { artifact_id, .. } => artifact_id.clone(),
+            _ => unreachable!(),
+        };
+        let _ = artifact_event;
+        let bytes = artifacts.open_range(&artifact_id, "ses_1", 0, 100).unwrap();
+        assert_eq!(bytes, b"tool output".to_vec());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
