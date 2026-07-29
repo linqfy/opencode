@@ -34,3 +34,13 @@ Reconciliation rules after a stop:
 - `NeverRetry` effects in any non-terminal state → `RequireUserDecision` (never auto-retry).
 
 Next (Plan 2d): the JSON-RPC sidecar process and Bun client. Next after that (Plan 2e): legacy OpenCode data import.
+
+## Sidecar RPC and Bun client (Stage 2d)
+
+`src/bin/sidecar.rs` hosts the whole event service and speaks newline-delimited JSON-RPC over stdio. Methods: `ping`, `propose_commit` (idempotent by key, indexes the projection before acking), `list_events`, `rebuild_projections`, `put_artifact`, `stat_artifact`, `open_range`, `reconcile_effects`. One JSON line in, one JSON line out; a request always yields exactly one response.
+
+`client/events-client.ts` is the Bun-side half: it spawns the sidecar and exposes typed method calls. The sidecar is the sole journal writer; the client never touches the journal files.
+
+State opens idempotently — a restart rebuilds projections and the effect index from the journal (proven by the restart integration test).
+
+Deferred to runtime integration (Stage 3): MessagePack framing and credit-based backpressure (`worker.v1` hardening), Electron main-process supervision/respawn wiring, and routing the live session flow through the sidecar.

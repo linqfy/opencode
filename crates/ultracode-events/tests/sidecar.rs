@@ -52,7 +52,8 @@ impl Sidecar {
 }
 
 fn base(name: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!("ultracode-sidecar-{name}-{}", std::process::id()));
+    let base =
+        std::env::temp_dir().join(format!("ultracode-sidecar-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     base
@@ -66,7 +67,8 @@ fn sidecar_serves_the_full_method_surface() {
     let pong = sidecar.call(1, "ping", json!({}));
     assert_eq!(pong["result"]["ok"], true);
 
-    let kind = json!({ "kind": "session-started", "data": { "client": "test", "client_version": "0" } });
+    let kind =
+        json!({ "kind": "session-started", "data": { "client": "test", "client_version": "0" } });
     let committed = sidecar.call(2, "propose_commit", json!({ "key": "cmd_a", "kind": kind }));
     assert_eq!(committed["result"]["seq"], 1);
     assert_eq!(committed["result"]["duplicate"], false);
@@ -85,11 +87,18 @@ fn sidecar_serves_the_full_method_surface() {
     );
     let artifact_id = put["result"]["artifact_id"].as_str().unwrap().to_string();
 
-    let read = sidecar.call(6, "open_range", json!({ "artifact_id": artifact_id, "scope": "ses_1", "start": 0, "end": 5 }));
+    let read = sidecar.call(
+        6,
+        "open_range",
+        json!({ "artifact_id": artifact_id, "scope": "ses_1", "start": 0, "end": 5 }),
+    );
     assert_eq!(read["result"]["bytes_hex"], "68656c6c6f");
 
     let reconciled = sidecar.call(7, "reconcile_effects", json!({ "unclean_stop": true }));
-    assert!(reconciled["result"].as_array().unwrap().is_empty(), "no side effects were prepared");
+    assert!(
+        reconciled["result"].as_array().unwrap().is_empty(),
+        "no side effects were prepared"
+    );
 
     sidecar.kill();
     let _ = std::fs::remove_dir_all(&dir);
@@ -111,7 +120,11 @@ fn sidecar_state_survives_a_restart() {
     {
         let mut sidecar = Sidecar::spawn(&dir);
         let listed = sidecar.call(1, "list_events", json!({ "session": "ses_1" }));
-        assert_eq!(listed["result"].as_array().unwrap().len(), 1, "event survives the restart");
+        assert_eq!(
+            listed["result"].as_array().unwrap().len(),
+            1,
+            "event survives the restart"
+        );
         // Idempotency also survives: the same key is still a duplicate.
         let kind = json!({ "kind": "turn-started", "data": { "turn": 1 } });
         let retry = sidecar.call(2, "propose_commit", json!({ "key": "cmd_a", "kind": kind }));

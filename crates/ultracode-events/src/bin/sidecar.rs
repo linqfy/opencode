@@ -28,7 +28,9 @@ fn parse_args() -> Result<Args, String> {
         }
     }
     Ok(Args {
-        journal_dir: journal_dir.map(PathBuf::from).ok_or("missing --journal-dir")?,
+        journal_dir: journal_dir
+            .map(PathBuf::from)
+            .ok_or("missing --journal-dir")?,
         db: db.map(PathBuf::from).ok_or("missing --db")?,
         artifacts: artifacts.map(PathBuf::from).ok_or("missing --artifacts")?,
         session: session.ok_or("missing --session")?,
@@ -44,13 +46,14 @@ fn main() {
         }
     };
 
-    let mut state = match SidecarState::open(&args.journal_dir, &args.db, &args.artifacts, &args.session) {
-        Ok(state) => state,
-        Err(e) => {
-            eprintln!("sidecar: failed to open state: {e}");
-            std::process::exit(1);
-        }
-    };
+    let mut state =
+        match SidecarState::open(&args.journal_dir, &args.db, &args.artifacts, &args.session) {
+            Ok(state) => state,
+            Err(e) => {
+                eprintln!("sidecar: failed to open state: {e}");
+                std::process::exit(1);
+            }
+        };
 
     let stdin = io::stdin();
     let stdout = io::stdout();
