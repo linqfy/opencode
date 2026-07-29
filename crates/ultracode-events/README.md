@@ -21,3 +21,16 @@ Layout: `event.rs` (schema + hashing), `journal.rs` (writer + rotation), `recove
 Next (Plan 2c): effect-ledger state machine and crash reconciliation. Next after that (Plan 2d): the JSON-RPC sidecar and Bun client.
 
 Next (Plan 2b): SQLite-WAL projections, artifact store, effect-ledger reconciliation. Next after that (Plan 2c): the JSON-RPC sidecar and Bun client.
+
+## Effect ledger and crash reconciliation (Stage 2c)
+
+`effect.rs` implements the crash-safe side-effect protocol (spec §11). Effect state is a PURE projection over the journal — `fold_effects` replays `SideEffectPrepared/Dispatched/Observed/OutcomeUnknown` into one `EffectRecord` per idempotency key; there is no state file.
+
+Reconciliation rules after a stop:
+- `Observed` is the only terminal success (`NoAction`).
+- A surviving `Prepared` from an UNCLEAN stop is "potentially dispatched".
+- `Idempotent` effects → `Retry` (executor must prove no external outcome first).
+- `Queryable` effects → `QueryExternal` (reconcile via external reference).
+- `NeverRetry` effects in any non-terminal state → `RequireUserDecision` (never auto-retry).
+
+Next (Plan 2d): the JSON-RPC sidecar process and Bun client. Next after that (Plan 2e): legacy OpenCode data import.

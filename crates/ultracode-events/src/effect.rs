@@ -55,7 +55,10 @@ pub fn fold_effects(records: &[Record]) -> Vec<EffectRecord> {
                 request_hash,
                 reconciliation_policy,
             } => {
-                if let Some(existing) = effects.iter_mut().find(|e| e.idempotency_key == *idempotency_key) {
+                if let Some(existing) = effects
+                    .iter_mut()
+                    .find(|e| e.idempotency_key == *idempotency_key)
+                {
                     existing.state = EffectState::Prepared;
                     continue;
                 }
@@ -72,21 +75,40 @@ pub fn fold_effects(records: &[Record]) -> Vec<EffectRecord> {
                     prepared_seq: record.event.seq,
                 });
             }
-            EventKind::SideEffectDispatched { idempotency_key, dispatch_identity } => {
-                if let Some(existing) = effects.iter_mut().find(|e| e.idempotency_key == *idempotency_key) {
+            EventKind::SideEffectDispatched {
+                idempotency_key,
+                dispatch_identity,
+            } => {
+                if let Some(existing) = effects
+                    .iter_mut()
+                    .find(|e| e.idempotency_key == *idempotency_key)
+                {
                     existing.state = EffectState::Dispatched;
                     existing.dispatch_identity = Some(dispatch_identity.clone());
                 }
             }
-            EventKind::SideEffectObserved { idempotency_key, outcome_hash, external_reference } => {
-                if let Some(existing) = effects.iter_mut().find(|e| e.idempotency_key == *idempotency_key) {
+            EventKind::SideEffectObserved {
+                idempotency_key,
+                outcome_hash,
+                external_reference,
+            } => {
+                if let Some(existing) = effects
+                    .iter_mut()
+                    .find(|e| e.idempotency_key == *idempotency_key)
+                {
                     existing.state = EffectState::Observed;
                     existing.outcome_hash = Some(outcome_hash.clone());
                     existing.external_reference = external_reference.clone();
                 }
             }
-            EventKind::SideEffectOutcomeUnknown { idempotency_key, reason } => {
-                if let Some(existing) = effects.iter_mut().find(|e| e.idempotency_key == *idempotency_key) {
+            EventKind::SideEffectOutcomeUnknown {
+                idempotency_key,
+                reason,
+            } => {
+                if let Some(existing) = effects
+                    .iter_mut()
+                    .find(|e| e.idempotency_key == *idempotency_key)
+                {
                     existing.state = EffectState::OutcomeUnknown;
                     existing.reason = Some(reason.clone());
                 }
@@ -189,10 +211,22 @@ mod tests {
         let dir = dir("lifecycle");
         let _ = std::fs::remove_dir_all(&dir);
         let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
-        j.append(prepared("k1", "idempotent"), Some("k1".into())).unwrap();
-        j.append(EventKind::SideEffectDispatched { idempotency_key: "k1".into(), dispatch_identity: "d1".into() }, None).unwrap();
+        j.append(prepared("k1", "idempotent"), Some("k1".into()))
+            .unwrap();
         j.append(
-            EventKind::SideEffectObserved { idempotency_key: "k1".into(), outcome_hash: "o".into(), external_reference: Some("ref".into()) },
+            EventKind::SideEffectDispatched {
+                idempotency_key: "k1".into(),
+                dispatch_identity: "d1".into(),
+            },
+            None,
+        )
+        .unwrap();
+        j.append(
+            EventKind::SideEffectObserved {
+                idempotency_key: "k1".into(),
+                outcome_hash: "o".into(),
+                external_reference: Some("ref".into()),
+            },
             None,
         )
         .unwrap();
@@ -213,9 +247,18 @@ mod tests {
         let dir = dir("interleaved");
         let _ = std::fs::remove_dir_all(&dir);
         let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
-        j.append(prepared("a", "idempotent"), Some("a".into())).unwrap();
-        j.append(prepared("b", "never-retry"), Some("b".into())).unwrap();
-        j.append(EventKind::SideEffectDispatched { idempotency_key: "a".into(), dispatch_identity: "da".into() }, None).unwrap();
+        j.append(prepared("a", "idempotent"), Some("a".into()))
+            .unwrap();
+        j.append(prepared("b", "never-retry"), Some("b".into()))
+            .unwrap();
+        j.append(
+            EventKind::SideEffectDispatched {
+                idempotency_key: "a".into(),
+                dispatch_identity: "da".into(),
+            },
+            None,
+        )
+        .unwrap();
         j.commit_boundary().unwrap();
 
         let opened = crate::recovery::open(&dir, "ses_1").unwrap();
@@ -234,9 +277,19 @@ mod tests {
         let dir = dir("pending");
         let _ = std::fs::remove_dir_all(&dir);
         let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
-        j.append(prepared("done", "idempotent"), Some("done".into())).unwrap();
-        j.append(EventKind::SideEffectObserved { idempotency_key: "done".into(), outcome_hash: "o".into(), external_reference: None }, None).unwrap();
-        j.append(prepared("stuck", "queryable"), Some("stuck".into())).unwrap();
+        j.append(prepared("done", "idempotent"), Some("done".into()))
+            .unwrap();
+        j.append(
+            EventKind::SideEffectObserved {
+                idempotency_key: "done".into(),
+                outcome_hash: "o".into(),
+                external_reference: None,
+            },
+            None,
+        )
+        .unwrap();
+        j.append(prepared("stuck", "queryable"), Some("stuck".into()))
+            .unwrap();
         j.commit_boundary().unwrap();
 
         let opened = crate::recovery::open(&dir, "ses_1").unwrap();
@@ -271,24 +324,49 @@ mod tests {
 
     #[test]
     fn never_retry_never_auto_retries_in_any_non_terminal_state() {
-        for state in [EffectState::Prepared, EffectState::Dispatched, EffectState::OutcomeUnknown] {
+        for state in [
+            EffectState::Prepared,
+            EffectState::Dispatched,
+            EffectState::OutcomeUnknown,
+        ] {
             let effect = record("k", ReconciliationPolicy::NeverRetry, state);
-            assert_eq!(reconcile_decision(&effect, true), ReconcileAction::RequireUserDecision);
+            assert_eq!(
+                reconcile_decision(&effect, true),
+                ReconcileAction::RequireUserDecision
+            );
         }
     }
 
     #[test]
     fn idempotent_is_retry_eligible_when_potentially_dispatched() {
-        let dispatched = record("k", ReconciliationPolicy::Idempotent, EffectState::Dispatched);
-        assert_eq!(reconcile_decision(&dispatched, true), ReconcileAction::Retry);
-        let unknown = record("k", ReconciliationPolicy::Idempotent, EffectState::OutcomeUnknown);
+        let dispatched = record(
+            "k",
+            ReconciliationPolicy::Idempotent,
+            EffectState::Dispatched,
+        );
+        assert_eq!(
+            reconcile_decision(&dispatched, true),
+            ReconcileAction::Retry
+        );
+        let unknown = record(
+            "k",
+            ReconciliationPolicy::Idempotent,
+            EffectState::OutcomeUnknown,
+        );
         assert_eq!(reconcile_decision(&unknown, true), ReconcileAction::Retry);
     }
 
     #[test]
     fn queryable_reconciles_externally() {
-        let dispatched = record("k", ReconciliationPolicy::Queryable, EffectState::Dispatched);
-        assert_eq!(reconcile_decision(&dispatched, true), ReconcileAction::QueryExternal);
+        let dispatched = record(
+            "k",
+            ReconciliationPolicy::Queryable,
+            EffectState::Dispatched,
+        );
+        assert_eq!(
+            reconcile_decision(&dispatched, true),
+            ReconcileAction::QueryExternal
+        );
     }
 
     #[test]
@@ -300,7 +378,10 @@ mod tests {
         assert_eq!(reconcile_decision(&prepared, false), ReconcileAction::Retry);
         // Clean-stop prepared never-retry effect still needs a user decision.
         let nr = record("k", ReconciliationPolicy::NeverRetry, EffectState::Prepared);
-        assert_eq!(reconcile_decision(&nr, false), ReconcileAction::RequireUserDecision);
+        assert_eq!(
+            reconcile_decision(&nr, false),
+            ReconcileAction::RequireUserDecision
+        );
     }
 
     #[test]
@@ -312,13 +393,33 @@ mod tests {
         {
             let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
             // idempotent, dispatched, no observed outcome -> Retry
-            j.append(prepared("idem", "idempotent"), Some("idem".into())).unwrap();
-            j.append(EventKind::SideEffectDispatched { idempotency_key: "idem".into(), dispatch_identity: "d".into() }, None).unwrap();
+            j.append(prepared("idem", "idempotent"), Some("idem".into()))
+                .unwrap();
+            j.append(
+                EventKind::SideEffectDispatched {
+                    idempotency_key: "idem".into(),
+                    dispatch_identity: "d".into(),
+                },
+                None,
+            )
+            .unwrap();
             // queryable, prepared only -> QueryExternal (unclean)
-            j.append(prepared("query", "queryable"), Some("query".into())).unwrap();
+            j.append(prepared("query", "queryable"), Some("query".into()))
+                .unwrap();
             // never-retry, dispatched -> RequireUserDecision
-            j.append(prepared("irreversible", "never-retry"), Some("irreversible".into())).unwrap();
-            j.append(EventKind::SideEffectDispatched { idempotency_key: "irreversible".into(), dispatch_identity: "d2".into() }, None).unwrap();
+            j.append(
+                prepared("irreversible", "never-retry"),
+                Some("irreversible".into()),
+            )
+            .unwrap();
+            j.append(
+                EventKind::SideEffectDispatched {
+                    idempotency_key: "irreversible".into(),
+                    dispatch_identity: "d2".into(),
+                },
+                None,
+            )
+            .unwrap();
             j.commit_boundary().unwrap();
             // dropped here = unclean stop
         }
@@ -327,12 +428,25 @@ mod tests {
         let opened = crate::recovery::open(&dir, "ses_1").unwrap();
         let effects = fold_effects(&opened.records);
         let pending = pending_effects(&effects);
-        assert_eq!(pending.len(), 3, "all three effects are non-terminal after the crash");
+        assert_eq!(
+            pending.len(),
+            3,
+            "all three effects are non-terminal after the crash"
+        );
 
         let by_key = |k: &str| effects.iter().find(|e| e.idempotency_key == k).unwrap();
-        assert_eq!(reconcile_decision(by_key("idem"), true), ReconcileAction::Retry);
-        assert_eq!(reconcile_decision(by_key("query"), true), ReconcileAction::QueryExternal);
-        assert_eq!(reconcile_decision(by_key("irreversible"), true), ReconcileAction::RequireUserDecision);
+        assert_eq!(
+            reconcile_decision(by_key("idem"), true),
+            ReconcileAction::Retry
+        );
+        assert_eq!(
+            reconcile_decision(by_key("query"), true),
+            ReconcileAction::QueryExternal
+        );
+        assert_eq!(
+            reconcile_decision(by_key("irreversible"), true),
+            ReconcileAction::RequireUserDecision
+        );
 
         // None of them is a model-visible success.
         assert!(pending.iter().all(|e| !is_observed(e)));
@@ -345,15 +459,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         {
             let mut j = JournalWriter::create(&dir, "ses_1").unwrap();
-            j.append(prepared("done", "idempotent"), Some("done".into())).unwrap();
-            j.append(EventKind::SideEffectDispatched { idempotency_key: "done".into(), dispatch_identity: "d".into() }, None).unwrap();
-            j.append(EventKind::SideEffectObserved { idempotency_key: "done".into(), outcome_hash: "o".into(), external_reference: None }, None).unwrap();
+            j.append(prepared("done", "idempotent"), Some("done".into()))
+                .unwrap();
+            j.append(
+                EventKind::SideEffectDispatched {
+                    idempotency_key: "done".into(),
+                    dispatch_identity: "d".into(),
+                },
+                None,
+            )
+            .unwrap();
+            j.append(
+                EventKind::SideEffectObserved {
+                    idempotency_key: "done".into(),
+                    outcome_hash: "o".into(),
+                    external_reference: None,
+                },
+                None,
+            )
+            .unwrap();
             j.commit_boundary().unwrap();
         }
         let opened = crate::recovery::open(&dir, "ses_1").unwrap();
         let effects = fold_effects(&opened.records);
-        assert!(pending_effects(&effects).is_empty(), "observed effect needs no reconciliation");
-        assert_eq!(reconcile_decision(&effects[0], true), ReconcileAction::NoAction);
+        assert!(
+            pending_effects(&effects).is_empty(),
+            "observed effect needs no reconciliation"
+        );
+        assert_eq!(
+            reconcile_decision(&effects[0], true),
+            ReconcileAction::NoAction
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
