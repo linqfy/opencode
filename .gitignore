@@ -33,3 +33,4 @@ logs/
 /traces/
 *.bun-build
 tsconfig.tsbuildinfo
+/docs/
