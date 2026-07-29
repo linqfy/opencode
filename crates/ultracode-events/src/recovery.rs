@@ -49,6 +49,8 @@ pub struct OpenedJournal {
     /// callers log it for diagnosability (spec §16 durability KPIs).
     pub truncated_tail: Option<String>,
     pub idempotency_keys: Vec<(String, u64)>,
+    /// Every validated record, in journal order. Projections rebuild from this.
+    pub records: Vec<crate::event::Record>,
 }
 
 fn segment_files(dir: &Path) -> Vec<PathBuf> {
@@ -79,12 +81,14 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
             writer,
             truncated_tail: None,
             idempotency_keys: vec![],
+            records: vec![],
         });
     }
 
     let mut seq = 0u64;
     let mut prev = crate::event::GENESIS_HASH;
     let mut keys: Vec<(String, u64)> = vec![];
+    let mut records: Vec<crate::event::Record> = Vec::new();
     let mut truncate_at: Option<(PathBuf, u64)> = None;
     let mut truncated_tail: Option<String> = None;
 
@@ -154,6 +158,7 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
                 line: line_no,
                 reason: e.to_string(),
             })?;
+            records.push(record.clone());
             if let Some(cmd) = &record.event.cmd {
                 keys.retain(|(k, _)| k != cmd);
                 keys.push((cmd.clone(), record.event.seq));
@@ -196,6 +201,7 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
         writer,
         truncated_tail,
         idempotency_keys: keys,
+        records,
     })
 }
 
