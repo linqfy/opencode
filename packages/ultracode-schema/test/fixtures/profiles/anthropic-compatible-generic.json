@@ -1,0 +1,18 @@
+{
+  "family": "anthropic-compatible-messages",
+  "input": { "text": true, "image": false, "audio": false, "video": false, "document": false },
+  "output": { "text": true, "image": false, "audio": false, "video": false, "document": false },
+  "media": {},
+  "contextTokens": 65536,
+  "outputTokens": 8192,
+  "tools": { "tools": false, "parallelTools": false, "strictSchema": false, "forcedChoice": false, "hosted": [] },
+  "json": "none",
+  "reasoning": { "effort": false, "summary": false, "opaqueReplay": false },
+  "systemRole": "system",
+  "continuation": { "stateful": false },
+  "caching": { "mode": "none", "breakpointLimit": 0 },
+  "streaming": { "events": false, "framing": "sse" },
+  "accounting": { "usage": true, "cachedTokens": false, "reasoningTokens": false },
+  "retention": { "zeroRetention": false },
+  "quirks": { "conservativeDefault": "explicit profile required for any enhancement" }
+}

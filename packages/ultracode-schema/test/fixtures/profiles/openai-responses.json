@@ -1,0 +1,18 @@
+{
+  "family": "openai-responses",
+  "input": { "text": true, "image": true, "audio": true, "video": false, "document": true },
+  "output": { "text": true, "image": true, "audio": true, "video": false, "document": false },
+  "media": { "maxBytesPerItem": 52428800 },
+  "contextTokens": 1048576,
+  "outputTokens": 128000,
+  "tools": { "tools": true, "parallelTools": true, "strictSchema": true, "forcedChoice": true, "hosted": ["web_search_call", "file_search_call", "code_interpreter_call", "local_shell_call", "image_generation_call", "computer_use_call"] },
+  "json": "schema",
+  "reasoning": { "effort": true, "summary": true, "opaqueReplay": true },
+  "systemRole": "developer",
+  "continuation": { "stateful": true },
+  "caching": { "mode": "auto", "breakpointLimit": 0 },
+  "streaming": { "events": true, "framing": "sse" },
+  "accounting": { "usage": true, "cachedTokens": true, "reasoningTokens": true },
+  "retention": { "zeroRetention": true },
+  "quirks": {}
+}

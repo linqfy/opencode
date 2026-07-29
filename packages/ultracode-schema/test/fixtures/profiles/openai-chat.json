@@ -1,0 +1,18 @@
+{
+  "family": "openai-chat",
+  "input": { "text": true, "image": true, "audio": true, "video": false, "document": false },
+  "output": { "text": true, "image": false, "audio": false, "video": false, "document": false },
+  "media": { "maxBytesPerItem": 20971520 },
+  "contextTokens": 1048576,
+  "outputTokens": 128000,
+  "tools": { "tools": true, "parallelTools": true, "strictSchema": true, "forcedChoice": true, "hosted": [] },
+  "json": "schema",
+  "reasoning": { "effort": true, "summary": false, "opaqueReplay": false },
+  "systemRole": "developer",
+  "continuation": { "stateful": false },
+  "caching": { "mode": "auto", "breakpointLimit": 0 },
+  "streaming": { "events": true, "framing": "sse" },
+  "accounting": { "usage": true, "cachedTokens": true, "reasoningTokens": false },
+  "retention": { "zeroRetention": false },
+  "quirks": { "reasoningViaVendorExtension": true }
+}
