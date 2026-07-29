@@ -8,6 +8,8 @@ import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
 import { Token } from "../util/token"
+import { Planner } from "@ultracode/context"
+import { toPlannerMessages } from "./compaction-adapter"
 
 const DEFAULT_BUFFER = 20_000
 const DEFAULT_KEEP_TOKENS = 8_000
@@ -83,7 +85,7 @@ export const serializeToolContent = (content: SessionMessage.ToolStateCompleted[
     )
     .join("\n")
 
-const serialize = (message: SessionMessage.Message) => {
+const serialize = (message: SessionMessage.Message, cleared?: Set<string>) => {
   if (message.type === "user") {
     const files = message.files?.map((file) => `[Attached ${file.mime}: ${file.name ?? file.uri}]`) ?? []
     return [`[User]: ${message.text}`, ...files].join("\n")
@@ -97,7 +99,9 @@ const serialize = (message: SessionMessage.Message) => {
         if (part.state.status === "completed")
           return [
             `[Assistant tool call]: ${part.name}(${input})`,
-            `[Tool result]: ${truncate(serializeToolContent(part.state.content))}`,
+            cleared?.has(part.id) === true
+              ? `[Tool result]: ${Planner.CLEARED_MESSAGE}`
+              : `[Tool result]: ${truncate(serializeToolContent(part.state.content))}`,
           ]
         if (part.state.status === "error")
           return [`[Assistant tool call]: ${part.name}(${input})`, `[Tool error]: ${part.state.error.message}`]
@@ -109,6 +113,19 @@ const serialize = (message: SessionMessage.Message) => {
   if (message.type === "synthetic") return `[Synthetic context]: ${message.text}`
   if (message.type === "shell") return `[Shell]: ${message.command}\n${truncate(message.output)}`
   return ""
+}
+
+// Runs the ultracode engine's protection-aware microcompact over the history and
+// returns the SessionMessage tool-part ids whose results it clears. The engine
+// protects the recent tail, the most-recent tool results, and tagged parts
+// (user-authored / active-failure), so only stale tool output is cleared before
+// summarization — reducing tokens without losing recent context. The adapter
+// gives cleared tool-result parts ids of the form `${toolPartId}-result`; strip
+// the suffix to map back to the SessionMessage tool part id used in `serialize`.
+const clearedToolPartIds = (entries: readonly Entry[]): Set<string> => {
+  const plannerMessages = toPlannerMessages(entries)
+  const { clearedPartIds } = Planner.microCompact(plannerMessages, Planner.DEFAULT_COMPACTION_CONFIG)
+  return new Set(clearedPartIds.map((id) => id.replace(/-result$/, "")))
 }
 
 const settings = (documents: readonly Config.Entry[]) => {
@@ -128,10 +145,11 @@ const settings = (documents: readonly Config.Entry[]) => {
 const select = (
   entries: readonly Entry[],
   tokens: number,
+  cleared?: Set<string>,
 ): { readonly head: string; readonly recent: string } | undefined => {
   const conversation = entries
     .filter((entry) => entry.message.type !== "compaction")
-    .map((entry) => serialize(entry.message))
+    .map((entry) => serialize(entry.message, cleared))
     .filter(Boolean)
   if (conversation.length === 0) return
   let total = 0
@@ -173,7 +191,7 @@ export const make = (dependencies: Dependencies) => {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
-    const selected = select(input.entries, config.tokens)
+    const selected = select(input.entries, config.tokens, clearedToolPartIds(input.entries))
     const previousSummary = input.entries.find((entry) => entry.message.type === "compaction")?.message
     if (!selected || (selected.head.length === 0 && previousSummary?.type !== "compaction")) return false
     const summaryPrompt = buildPrompt({
