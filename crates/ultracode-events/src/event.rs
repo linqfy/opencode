@@ -1,0 +1,185 @@
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const SCHEMA_VERSION: u32 = 1;
+
+static EVENT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before epoch")
+        .as_millis() as u64
+}
+
+/// Unique, monotonic-enough event identity: hex(ms)-hex(counter)-hex(pid).
+pub fn new_event_id() -> String {
+    let counter = EVENT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{:x}-{:x}-{:x}", now_ms(), counter, std::process::id())
+}
+
+/// All authoritative event types (spec section 11). serde adjacent tagging
+/// renders lines as {"kind": "session-started", "data": {...}}.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
+pub enum EventKind {
+    SessionStarted { client: String, client_version: String },
+    TurnStarted { turn: u32 },
+    UserInputCommitted { parts: Vec<BTreeMap<String, serde_json::Value>> },
+    ContextPlanned { fingerprint: String, estimated_tokens: u64 },
+    PromptCompiled { fingerprint: String, blocks: Vec<String> },
+    ProviderAttemptStarted { attempt: u32, family: String, model: String, request_fingerprint: String },
+    ProviderAttemptCompleted { attempt: u32, finish_reason: String, usage: Option<BTreeMap<String, u64>> },
+    ToolProposed { tool: String, call_id: String },
+    ApprovalResolved { call_id: String, verdict: String, rule: String },
+    ToolStarted { call_id: String, tool: String },
+    SideEffectPrepared { idempotency_key: String, tool: String, request_hash: String, reconciliation_policy: String },
+    SideEffectDispatched { idempotency_key: String, dispatch_identity: String },
+    SideEffectObserved { idempotency_key: String, outcome_hash: String, external_reference: Option<String> },
+    SideEffectOutcomeUnknown { idempotency_key: String, reason: String },
+    ToolResultCommitted { call_id: String, status: String, preview_len: u64, artifact_ids: Vec<String> },
+    ArtifactStored { artifact_id: String, mime: String, byte_length: u64, hash: String },
+    SemanticCheckpointCreated { checkpoint_hash: String, recent_tail_start_id: String },
+    AgentSpawned { agent_id: String, parent_agent_id: Option<String>, budget: u64 },
+    AgentStateChanged { agent_id: String, state: String },
+    WorkspaceSnapshotCreated { snapshot_id: String, baseline_id: String },
+    AssistantMessageCommitted { message_id: String, parts: u32 },
+    TurnCompleted { turn: u32 },
+    TurnAborted { turn: u32, reason: String },
+    /// Internal line written as the final line of a sealed segment at rotation.
+    SegmentSeal { sealed_events: u64, final_hash: String },
+}
+
+/// One unsigned journal record; the hash of this is the chain link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Event {
+    pub v: u32,
+    pub seq: u64,
+    pub id: String,
+    pub ts: u64,
+    pub session: String,
+    /// Idempotency key of the proposing command; None for internal lines.
+    pub cmd: Option<String>,
+    #[serde(flatten)]
+    pub kind: EventKind,
+}
+
+/// The hashed, on-disk line form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Record {
+    #[serde(flatten)]
+    pub event: Event,
+    pub prev: String,
+    pub hash: String,
+}
+
+pub fn hash_hex(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+pub fn hash_from_hex(hex: &str) -> Result<[u8; 32], String> {
+    if hex.len() != 64 {
+        return Err(format!("hash must be 64 hex chars, got {}", hex.len()));
+    }
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+pub const GENESIS_HASH: [u8; 32] = [0u8; 32];
+
+impl Event {
+    /// Canonical bytes for hashing. Struct field order is declaration order;
+    /// open maps are BTreeMap; no floats. This function is frozen by tests.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_ids_are_unique_and_clock_first() {
+        let a = new_event_id();
+        let b = new_event_id();
+        assert_ne!(a, b);
+        let counter_a = a.split('-').nth(1).unwrap();
+        let counter_b = b.split('-').nth(1).unwrap();
+        assert!(u64::from_str_radix(counter_b, 16).unwrap() > u64::from_str_radix(counter_a, 16).unwrap());
+        assert_eq!(a.split('-').count(), 3);
+    }
+
+    #[test]
+    fn kind_tags_are_kebab_case() {
+        let event = Event {
+            v: SCHEMA_VERSION,
+            seq: 1,
+            id: "id".into(),
+            ts: 1,
+            session: "ses_1".into(),
+            cmd: None,
+            kind: EventKind::SideEffectPrepared {
+                idempotency_key: "k".into(),
+                tool: "t".into(),
+                request_hash: "h".into(),
+                reconciliation_policy: "idempotent".into(),
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"kind\":\"side-effect-prepared\""), "got: {json}");
+    }
+
+    #[test]
+    fn canonical_bytes_are_deterministic_regardless_of_map_insertion_order() {
+        let mut a = BTreeMap::new();
+        a.insert("z".to_string(), serde_json::json!(1));
+        a.insert("a".to_string(), serde_json::json!(2));
+        let mut b = BTreeMap::new();
+        b.insert("a".to_string(), serde_json::json!(2));
+        b.insert("z".to_string(), serde_json::json!(1));
+        let make = |parts| Event {
+            v: SCHEMA_VERSION,
+            seq: 1,
+            id: "id".into(),
+            ts: 1,
+            session: "s".into(),
+            cmd: None,
+            kind: EventKind::UserInputCommitted { parts },
+        };
+        assert_eq!(make(vec![a]).canonical_bytes().unwrap(), make(vec![b]).canonical_bytes().unwrap());
+    }
+
+    #[test]
+    fn record_round_trips() {
+        let record = Record {
+            event: Event {
+                v: SCHEMA_VERSION,
+                seq: 1,
+                id: "id".into(),
+                ts: 1,
+                session: "s".into(),
+                cmd: Some("cmd_1".into()),
+                kind: EventKind::TurnStarted { turn: 1 },
+            },
+            prev: hash_hex(&GENESIS_HASH),
+            hash: "ab".repeat(32),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: Record = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn hash_hex_round_trip() {
+        let h = GENESIS_HASH;
+        assert_eq!(hash_from_hex(&hash_hex(&h)).unwrap(), h);
+        assert!(hash_from_hex("zz").is_err());
+        assert!(hash_from_hex("ab").is_err());
+    }
+}
