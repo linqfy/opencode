@@ -44,3 +44,17 @@ Next (Plan 2d): the JSON-RPC sidecar process and Bun client. Next after that (Pl
 State opens idempotently — a restart rebuilds projections and the effect index from the journal (proven by the restart integration test).
 
 Deferred to runtime integration (Stage 3): MessagePack framing and credit-based backpressure (`worker.v1` hardening), Electron main-process supervision/respawn wiring, and routing the live session flow through the sidecar.
+
+## Legacy import (Stage 2e)
+
+`import.rs` + `src/bin/import-legacy.rs` import an existing OpenCode SQLite database (`session` + `session_message` tables) into the journal as `LegacySessionImported` / `LegacyMessageImported` events. OpenCode message `data` is carried as opaque raw JSON text — the importer never decodes OpenCode's schema, so fidelity is total and coupling is zero.
+
+Guarantees:
+- The source DB is opened READ-ONLY and never modified.
+- Import is idempotent (deterministic propose keys `legacy-session-{id}` / `legacy-message-{id}`); re-runs skip already-imported rows.
+- `--dry-run` reports counts without writing.
+- A bad session/message is skipped and recorded in the report; it never aborts the import.
+
+Usage: `import-legacy --source-db <opencode.db> --journal-dir <dir> [--session legacy] [--dry-run]`.
+
+This completes Stage 2 (the durable event-service foundation). Stage 3 wires the live session flow through the sidecar and builds the prompt compiler / context planner.

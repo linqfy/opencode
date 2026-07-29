@@ -26,8 +26,13 @@ fn source_name(source_db: &Path) -> String {
 /// Imports all sessions and messages from an OpenCode database into the
 /// journal via `commit`. Idempotent: deterministic propose keys mean a re-run
 /// skips already-imported rows. In dry-run mode nothing is written.
-pub fn import_legacy(source_db: &Path, commit: &mut CommitLog, dry_run: bool) -> io::Result<ImportReport> {
-    let source = Connection::open_with_flags(source_db, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(io::Error::other)?;
+pub fn import_legacy(
+    source_db: &Path,
+    commit: &mut CommitLog,
+    dry_run: bool,
+) -> io::Result<ImportReport> {
+    let source = Connection::open_with_flags(source_db, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(io::Error::other)?;
     let source_label = source_name(source_db);
     let mut report = ImportReport::default();
 
@@ -36,7 +41,13 @@ pub fn import_legacy(source_db: &Path, commit: &mut CommitLog, dry_run: bool) ->
         .prepare("SELECT id, title, directory FROM session ORDER BY time_created ASC, id ASC")
         .map_err(io::Error::other)?;
     let sessions: Vec<(String, String, String)> = session_stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
         .map_err(io::Error::other)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(io::Error::other)?;
@@ -89,8 +100,8 @@ pub fn import_legacy(source_db: &Path, commit: &mut CommitLog, dry_run: bool) ->
                 continue;
             }
         };
-        let messages: Vec<(String, String, i64, String)> = match message_stmt
-            .query_map(rusqlite::params![session_id], |row| {
+        let messages: Vec<(String, String, i64, String)> =
+            match message_stmt.query_map(rusqlite::params![session_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -98,12 +109,14 @@ pub fn import_legacy(source_db: &Path, commit: &mut CommitLog, dry_run: bool) ->
                     row.get::<_, String>(3)?,
                 ))
             }) {
-            Ok(rows) => rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
-            Err(e) => {
-                report.errors.push(format!("session {session_id} message query: {e}"));
-                continue;
-            }
-        };
+                Ok(rows) => rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
+                Err(e) => {
+                    report
+                        .errors
+                        .push(format!("session {session_id} message query: {e}"));
+                    continue;
+                }
+            };
 
         for (message_id, message_type, seq, data) in messages {
             let message_key = format!("legacy-message-{message_id}");
@@ -156,7 +169,8 @@ mod tests {
     ";
 
     fn base(name: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("ultracode-import-{name}-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("ultracode-import-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         base
@@ -214,7 +228,8 @@ mod tests {
             .filter(|r| {
                 matches!(
                     r.event.kind,
-                    crate::event::EventKind::LegacySessionImported { .. } | crate::event::EventKind::LegacyMessageImported { .. }
+                    crate::event::EventKind::LegacySessionImported { .. }
+                        | crate::event::EventKind::LegacyMessageImported { .. }
                 )
             })
             .collect();
@@ -246,7 +261,8 @@ mod tests {
             .filter(|r| {
                 matches!(
                     r.event.kind,
-                    crate::event::EventKind::LegacySessionImported { .. } | crate::event::EventKind::LegacyMessageImported { .. }
+                    crate::event::EventKind::LegacySessionImported { .. }
+                        | crate::event::EventKind::LegacyMessageImported { .. }
                 )
             })
             .count();
@@ -267,7 +283,10 @@ mod tests {
         assert_eq!(report.messages_imported, 3);
 
         let opened = recovery::open(&journal, "legacy").unwrap();
-        assert!(opened.records.is_empty(), "dry run must not write to the journal");
+        assert!(
+            opened.records.is_empty(),
+            "dry run must not write to the journal"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

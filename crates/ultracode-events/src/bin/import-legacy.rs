@@ -29,7 +29,9 @@ fn parse_args() -> Result<Args, String> {
     }
     Ok(Args {
         source_db: source_db.map(PathBuf::from).ok_or("missing --source-db")?,
-        journal_dir: journal_dir.map(PathBuf::from).ok_or("missing --journal-dir")?,
+        journal_dir: journal_dir
+            .map(PathBuf::from)
+            .ok_or("missing --journal-dir")?,
         session: session.unwrap(),
         dry_run,
     })
