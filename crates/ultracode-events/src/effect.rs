@@ -111,6 +111,59 @@ pub fn is_observed(effect: &EffectRecord) -> bool {
     effect.state == EffectState::Observed
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconcileAction {
+    /// Terminal success; no reconciliation needed.
+    NoAction,
+    /// Retry-eligible. The executor MUST still prove no external outcome
+    /// exists (via the idempotency key) before actually retrying.
+    Retry,
+    /// Reconcile by querying the external system using external_reference /
+    /// request_hash, then transition to Observed or OutcomeUnknown.
+    QueryExternal,
+    /// Irreversible / non-queryable: never auto-retry. Requires an explicit
+    /// user decision.
+    RequireUserDecision,
+}
+
+/// A surviving Prepared from an unclean stop is "potentially dispatched".
+/// Dispatched and OutcomeUnknown are always potentially dispatched. Observed
+/// is resolved. A clean-stop Prepared is provably not dispatched.
+pub fn is_potentially_dispatched(effect: &EffectRecord, unclean_stop: bool) -> bool {
+    match effect.state {
+        EffectState::Observed => false,
+        EffectState::Prepared => unclean_stop,
+        EffectState::Dispatched | EffectState::OutcomeUnknown => true,
+    }
+}
+
+/// Applies the spec section 11 reconciliation rules.
+pub fn reconcile_decision(effect: &EffectRecord, unclean_stop: bool) -> ReconcileAction {
+    if effect.state == EffectState::Observed {
+        return ReconcileAction::NoAction;
+    }
+    // Non-terminal. A clean-stop Prepared that was never dispatched is safely
+    // re-preparable; everything else is potentially dispatched.
+    let potentially_dispatched = is_potentially_dispatched(effect, unclean_stop);
+    if !potentially_dispatched {
+        // Clean stop, prepared but never dispatched: no bytes were sent.
+        return match effect.policy {
+            ReconciliationPolicy::Idempotent => ReconcileAction::Retry,
+            ReconciliationPolicy::Queryable => ReconcileAction::QueryExternal,
+            ReconciliationPolicy::NeverRetry => ReconcileAction::RequireUserDecision,
+        };
+    }
+    match effect.policy {
+        // Idempotent tools reconcile by key; retry-eligible (executor proves
+        // no outcome first).
+        ReconciliationPolicy::Idempotent => ReconcileAction::Retry,
+        // Queryable non-idempotent tools reconcile via external reference.
+        ReconciliationPolicy::Queryable => ReconcileAction::QueryExternal,
+        // Irreversible / non-queryable: never auto-retry.
+        ReconciliationPolicy::NeverRetry => ReconcileAction::RequireUserDecision,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +245,61 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].idempotency_key, "stuck");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn record(key: &str, policy: ReconciliationPolicy, state: EffectState) -> EffectRecord {
+        EffectRecord {
+            idempotency_key: key.into(),
+            tool: "deploy".into(),
+            request_hash: "h".into(),
+            policy,
+            state,
+            dispatch_identity: None,
+            outcome_hash: None,
+            external_reference: None,
+            reason: None,
+            prepared_seq: 1,
+        }
+    }
+
+    #[test]
+    fn observed_is_terminal_no_action() {
+        let effect = record("k", ReconciliationPolicy::NeverRetry, EffectState::Observed);
+        assert_eq!(reconcile_decision(&effect, true), ReconcileAction::NoAction);
+        assert!(!is_potentially_dispatched(&effect, true));
+    }
+
+    #[test]
+    fn never_retry_never_auto_retries_in_any_non_terminal_state() {
+        for state in [EffectState::Prepared, EffectState::Dispatched, EffectState::OutcomeUnknown] {
+            let effect = record("k", ReconciliationPolicy::NeverRetry, state);
+            assert_eq!(reconcile_decision(&effect, true), ReconcileAction::RequireUserDecision);
+        }
+    }
+
+    #[test]
+    fn idempotent_is_retry_eligible_when_potentially_dispatched() {
+        let dispatched = record("k", ReconciliationPolicy::Idempotent, EffectState::Dispatched);
+        assert_eq!(reconcile_decision(&dispatched, true), ReconcileAction::Retry);
+        let unknown = record("k", ReconciliationPolicy::Idempotent, EffectState::OutcomeUnknown);
+        assert_eq!(reconcile_decision(&unknown, true), ReconcileAction::Retry);
+    }
+
+    #[test]
+    fn queryable_reconciles_externally() {
+        let dispatched = record("k", ReconciliationPolicy::Queryable, EffectState::Dispatched);
+        assert_eq!(reconcile_decision(&dispatched, true), ReconcileAction::QueryExternal);
+    }
+
+    #[test]
+    fn unclean_prepared_is_potentially_dispatched_clean_is_not() {
+        let prepared = record("k", ReconciliationPolicy::Idempotent, EffectState::Prepared);
+        assert!(is_potentially_dispatched(&prepared, true));
+        assert!(!is_potentially_dispatched(&prepared, false));
+        // Clean-stop prepared idempotent effect is still retry-eligible (no bytes sent).
+        assert_eq!(reconcile_decision(&prepared, false), ReconcileAction::Retry);
+        // Clean-stop prepared never-retry effect still needs a user decision.
+        let nr = record("k", ReconciliationPolicy::NeverRetry, EffectState::Prepared);
+        assert_eq!(reconcile_decision(&nr, false), ReconcileAction::RequireUserDecision);
     }
 }
