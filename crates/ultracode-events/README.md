@@ -12,4 +12,12 @@ Invariants:
 
 Layout: `event.rs` (schema + hashing), `journal.rs` (writer + rotation), `recovery.rs` (open/validate/truncate), `commit.rs` (idempotent `CommitLog`).
 
+## Projections and artifacts (Stage 2b)
+
+`projections.rs` maintains a SQLite-WAL `events_index` that is ALWAYS a projection of the journal — `rebuild` truncates and replays, so the journal is never second-guessed. Kind names are derived from the serde tag, so they cannot drift from the schema.
+
+`artifacts.rs` is a content-addressed store: id = sha256(bytes) hex, bytes fsynced (temp + rename) before the metadata row is visible, identical bytes deduped to one blob. Retention classes are `turn`/`session`/`workspace`/`pinned`; eviction removes only expired + unreferenced + non-pinned artifacts. `NoPersist` credential artifacts store metadata only and fail `open_range`.
+
+Next (Plan 2c): effect-ledger state machine and crash reconciliation. Next after that (Plan 2d): the JSON-RPC sidecar and Bun client.
+
 Next (Plan 2b): SQLite-WAL projections, artifact store, effect-ledger reconciliation. Next after that (Plan 2c): the JSON-RPC sidecar and Bun client.

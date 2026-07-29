@@ -102,7 +102,8 @@ pub struct ArtifactStore {
 
 impl ArtifactStore {
     pub fn open(root: &Path, db_path: &Path) -> Result<Self, rusqlite::Error> {
-        fs::create_dir_all(root).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        fs::create_dir_all(root)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let conn = Connection::open(db_path)?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
@@ -120,7 +121,10 @@ impl ArtifactStore {
                  expires_at INTEGER
              );",
         )?;
-        Ok(Self { root: root.to_path_buf(), conn })
+        Ok(Self {
+            root: root.to_path_buf(),
+            conn,
+        })
     }
 
     fn blob_path(&self, artifact_id: &str) -> PathBuf {
@@ -155,7 +159,11 @@ impl ArtifactStore {
                 // Write through a writable handle and fsync THAT handle: on
                 // Windows, FlushFileBuffers requires write access, so reopening
                 // read-only to sync would fail.
-                let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).open(&tmp)?;
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&tmp)?;
                 file.write_all(bytes)?;
                 file.sync_all()?;
                 drop(file);
@@ -191,7 +199,11 @@ impl ArtifactStore {
         })
     }
 
-    pub fn stat(&self, artifact_id: &str, requester_scope: &str) -> io::Result<Option<ArtifactMetadata>> {
+    pub fn stat(
+        &self,
+        artifact_id: &str,
+        requester_scope: &str,
+    ) -> io::Result<Option<ArtifactMetadata>> {
         let mut stmt = self
             .conn
             .prepare(
@@ -218,7 +230,18 @@ impl ArtifactStore {
         match rows.next() {
             None => Ok(None),
             Some(Err(e)) => Err(io::Error::other(e)),
-            Some(Ok((id, mime, byte_length, hash, owner_scope, retention, credential_class, ref_count, created_at, expires_at))) => {
+            Some(Ok((
+                id,
+                mime,
+                byte_length,
+                hash,
+                owner_scope,
+                retention,
+                credential_class,
+                ref_count,
+                created_at,
+                expires_at,
+            ))) => {
                 if owner_scope != requester_scope {
                     return Ok(None);
                 }
@@ -229,7 +252,8 @@ impl ArtifactStore {
                     hash,
                     owner_scope,
                     retention: Retention::from_str(&retention).unwrap_or(Retention::Workspace),
-                    credential_class: CredentialClass::from_str(&credential_class).unwrap_or(CredentialClass::Plain),
+                    credential_class: CredentialClass::from_str(&credential_class)
+                        .unwrap_or(CredentialClass::Plain),
                     ref_count,
                     created_at: created_at as u64,
                     expires_at: expires_at.map(|v| v as u64),
@@ -248,9 +272,17 @@ impl ArtifactStore {
         end: u64,
     ) -> io::Result<Vec<u8>> {
         let meta = self.stat(artifact_id, requester_scope)?;
-        let meta = meta.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "artifact not found or out of scope"))?;
+        let meta = meta.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "artifact not found or out of scope",
+            )
+        })?;
         if meta.credential_class == CredentialClass::NoPersist {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, "NoPersist artifact has no stored bytes"));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "NoPersist artifact has no stored bytes",
+            ));
         }
         let bytes = fs::read(self.blob_path(artifact_id))?;
         let start = start.min(bytes.len() as u64) as usize;
@@ -277,7 +309,11 @@ impl ArtifactStore {
             .conn
             .execute(
                 "UPDATE artifact_meta SET retention = ?2, expires_at = ?3 WHERE artifact_id = ?1",
-                params![artifact_id, retention.as_str(), expires_at.map(|v| v as i64)],
+                params![
+                    artifact_id,
+                    retention.as_str(),
+                    expires_at.map(|v| v as i64)
+                ],
             )
             .map_err(io::Error::other)?;
         Ok(changed > 0)
@@ -310,9 +346,12 @@ impl ArtifactStore {
                 )
                 .map_err(io::Error::other)?;
             let rows = stmt
-                .query_map(params![now as i64], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map(params![now as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(io::Error::other)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(io::Error::other)?
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(io::Error::other)?
         };
 
         let mut removed = 0usize;
@@ -324,7 +363,10 @@ impl ArtifactStore {
                 }
             }
             self.conn
-                .execute("DELETE FROM artifact_meta WHERE artifact_id = ?1", params![artifact_id])
+                .execute(
+                    "DELETE FROM artifact_meta WHERE artifact_id = ?1",
+                    params![artifact_id],
+                )
                 .map_err(io::Error::other)?;
             removed += 1;
         }
@@ -337,7 +379,8 @@ mod tests {
     use super::*;
 
     fn dirs(name: &str) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("ultracode-art-{name}-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("ultracode-art-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("blobs");
         let db = base.join("art.db");
@@ -348,11 +391,23 @@ mod tests {
     fn put_then_stat_round_trips() {
         let (root, db) = dirs("roundtrip");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
-        let reference = store.put(b"hello world", "text/plain", "ses_1", Retention::Session, CredentialClass::Plain, None).unwrap();
+        let reference = store
+            .put(
+                b"hello world",
+                "text/plain",
+                "ses_1",
+                Retention::Session,
+                CredentialClass::Plain,
+                None,
+            )
+            .unwrap();
         assert_eq!(reference.byte_length, 11);
         assert_eq!(reference.artifact_id.len(), 64);
 
-        let meta = store.stat(&reference.artifact_id, "ses_1").unwrap().unwrap();
+        let meta = store
+            .stat(&reference.artifact_id, "ses_1")
+            .unwrap()
+            .unwrap();
         assert_eq!(meta.mime, "text/plain");
         assert_eq!(meta.byte_length, 11);
         assert_eq!(meta.retention, Retention::Session);
@@ -364,8 +419,26 @@ mod tests {
     fn identical_bytes_dedupe_to_one_blob() {
         let (root, db) = dirs("dedupe");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
-        let a = store.put(b"same", "text/plain", "ses_1", Retention::Workspace, CredentialClass::Plain, None).unwrap();
-        let b = store.put(b"same", "text/plain", "ses_1", Retention::Workspace, CredentialClass::Plain, None).unwrap();
+        let a = store
+            .put(
+                b"same",
+                "text/plain",
+                "ses_1",
+                Retention::Workspace,
+                CredentialClass::Plain,
+                None,
+            )
+            .unwrap();
+        let b = store
+            .put(
+                b"same",
+                "text/plain",
+                "ses_1",
+                Retention::Workspace,
+                CredentialClass::Plain,
+                None,
+            )
+            .unwrap();
         assert_eq!(a.artifact_id, b.artifact_id);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
@@ -374,8 +447,19 @@ mod tests {
     fn open_range_reads_a_slice() {
         let (root, db) = dirs("range");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
-        let reference = store.put(b"0123456789", "text/plain", "ses_1", Retention::Workspace, CredentialClass::Plain, None).unwrap();
-        let slice = store.open_range(&reference.artifact_id, "ses_1", 2, 6).unwrap();
+        let reference = store
+            .put(
+                b"0123456789",
+                "text/plain",
+                "ses_1",
+                Retention::Workspace,
+                CredentialClass::Plain,
+                None,
+            )
+            .unwrap();
+        let slice = store
+            .open_range(&reference.artifact_id, "ses_1", 2, 6)
+            .unwrap();
         assert_eq!(slice, b"2345".to_vec());
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
@@ -384,9 +468,24 @@ mod tests {
     fn stat_is_scope_gated() {
         let (root, db) = dirs("scope");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
-        let reference = store.put(b"secret", "text/plain", "ses_1", Retention::Workspace, CredentialClass::Plain, None).unwrap();
-        assert!(store.stat(&reference.artifact_id, "ses_1").unwrap().is_some());
-        assert!(store.stat(&reference.artifact_id, "ses_other").unwrap().is_none());
+        let reference = store
+            .put(
+                b"secret",
+                "text/plain",
+                "ses_1",
+                Retention::Workspace,
+                CredentialClass::Plain,
+                None,
+            )
+            .unwrap();
+        assert!(store
+            .stat(&reference.artifact_id, "ses_1")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .stat(&reference.artifact_id, "ses_other")
+            .unwrap()
+            .is_none());
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
@@ -394,10 +493,24 @@ mod tests {
     fn no_persist_artifact_has_no_bytes() {
         let (root, db) = dirs("nopersist");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
-        let reference = store.put(b"api-key", "text/plain", "ses_1", Retention::Turn, CredentialClass::NoPersist, None).unwrap();
-        let meta = store.stat(&reference.artifact_id, "ses_1").unwrap().unwrap();
+        let reference = store
+            .put(
+                b"api-key",
+                "text/plain",
+                "ses_1",
+                Retention::Turn,
+                CredentialClass::NoPersist,
+                None,
+            )
+            .unwrap();
+        let meta = store
+            .stat(&reference.artifact_id, "ses_1")
+            .unwrap()
+            .unwrap();
         assert_eq!(meta.credential_class, CredentialClass::NoPersist);
-        let err = store.open_range(&reference.artifact_id, "ses_1", 0, 7).unwrap_err();
+        let err = store
+            .open_range(&reference.artifact_id, "ses_1", 0, 7)
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
@@ -407,21 +520,65 @@ mod tests {
         let (root, db) = dirs("evict");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
         // expired + unreferenced -> evicted
-        let expired = store.put(b"old", "text/plain", "ses_1", Retention::Turn, CredentialClass::Plain, Some(100)).unwrap();
+        let expired = store
+            .put(
+                b"old",
+                "text/plain",
+                "ses_1",
+                Retention::Turn,
+                CredentialClass::Plain,
+                Some(100),
+            )
+            .unwrap();
         store.release(&expired.artifact_id, "ses_1").unwrap();
         // expired but still referenced -> kept
-        let referenced = store.put(b"held", "text/plain", "ses_1", Retention::Turn, CredentialClass::Plain, Some(100)).unwrap();
+        let referenced = store
+            .put(
+                b"held",
+                "text/plain",
+                "ses_1",
+                Retention::Turn,
+                CredentialClass::Plain,
+                Some(100),
+            )
+            .unwrap();
         // expired + unreferenced but pinned -> kept
-        let pinned = store.put(b"pin", "text/plain", "ses_1", Retention::Pinned, CredentialClass::Plain, Some(100)).unwrap();
+        let pinned = store
+            .put(
+                b"pin",
+                "text/plain",
+                "ses_1",
+                Retention::Pinned,
+                CredentialClass::Plain,
+                Some(100),
+            )
+            .unwrap();
         store.release(&pinned.artifact_id, "ses_1").unwrap();
-        store.retain(&pinned.artifact_id, "ses_1", Retention::Pinned, Some(100)).unwrap();
+        store
+            .retain(&pinned.artifact_id, "ses_1", Retention::Pinned, Some(100))
+            .unwrap();
         // not expired -> kept
-        let fresh = store.put(b"new", "text/plain", "ses_1", Retention::Session, CredentialClass::Plain, Some(10_000)).unwrap();
+        let fresh = store
+            .put(
+                b"new",
+                "text/plain",
+                "ses_1",
+                Retention::Session,
+                CredentialClass::Plain,
+                Some(10_000),
+            )
+            .unwrap();
 
         let removed = store.evict_expired(200).unwrap();
-        assert_eq!(removed, 1, "only the expired unreferenced non-pinned artifact is removed");
+        assert_eq!(
+            removed, 1,
+            "only the expired unreferenced non-pinned artifact is removed"
+        );
         assert!(store.stat(&expired.artifact_id, "ses_1").unwrap().is_none());
-        assert!(store.stat(&referenced.artifact_id, "ses_1").unwrap().is_some());
+        assert!(store
+            .stat(&referenced.artifact_id, "ses_1")
+            .unwrap()
+            .is_some());
         assert!(store.stat(&pinned.artifact_id, "ses_1").unwrap().is_some());
         assert!(store.stat(&fresh.artifact_id, "ses_1").unwrap().is_some());
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
@@ -431,10 +588,22 @@ mod tests {
     fn release_floors_at_zero() {
         let (root, db) = dirs("floor");
         let mut store = ArtifactStore::open(&root, &db).unwrap();
-        let reference = store.put(b"x", "text/plain", "ses_1", Retention::Workspace, CredentialClass::Plain, None).unwrap();
+        let reference = store
+            .put(
+                b"x",
+                "text/plain",
+                "ses_1",
+                Retention::Workspace,
+                CredentialClass::Plain,
+                None,
+            )
+            .unwrap();
         store.release(&reference.artifact_id, "ses_1").unwrap();
         store.release(&reference.artifact_id, "ses_1").unwrap();
-        let meta = store.stat(&reference.artifact_id, "ses_1").unwrap().unwrap();
+        let meta = store
+            .stat(&reference.artifact_id, "ses_1")
+            .unwrap()
+            .unwrap();
         assert_eq!(meta.ref_count, 0);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }

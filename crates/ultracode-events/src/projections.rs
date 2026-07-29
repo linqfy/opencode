@@ -36,7 +36,10 @@ impl ProjectionStore {
              );
              CREATE INDEX IF NOT EXISTS idx_events_session ON events_index(session, seq);",
         )?;
-        Ok(Self { conn, path: path.to_path_buf() })
+        Ok(Self {
+            conn,
+            path: path.to_path_buf(),
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -128,9 +131,17 @@ mod tests {
 
     fn write_journal(dir: &Path) {
         let mut j = JournalWriter::create(dir, "ses_1").unwrap();
-        j.append(EventKind::SessionStarted { client: "t".into(), client_version: "0".into() }, None).unwrap();
+        j.append(
+            EventKind::SessionStarted {
+                client: "t".into(),
+                client_version: "0".into(),
+            },
+            None,
+        )
+        .unwrap();
         j.append(EventKind::TurnStarted { turn: 1 }, None).unwrap();
-        j.append(EventKind::TurnCompleted { turn: 1 }, None).unwrap();
+        j.append(EventKind::TurnCompleted { turn: 1 }, None)
+            .unwrap();
         j.commit_boundary().unwrap();
     }
 
@@ -181,7 +192,11 @@ mod tests {
         let mut store = ProjectionStore::open(&dbdir.join("proj.db")).unwrap();
         store.rebuild(&jdir, "ses_1").unwrap();
         store.rebuild(&jdir, "ses_1").unwrap();
-        assert_eq!(store.count().unwrap(), 3, "rebuild must truncate, not append");
+        assert_eq!(
+            store.count().unwrap(),
+            3,
+            "rebuild must truncate, not append"
+        );
         let _ = std::fs::remove_dir_all(&jdir);
         let _ = std::fs::remove_dir_all(&dbdir);
     }
@@ -220,10 +235,27 @@ mod tests {
         // First "session": commit events + store an artifact.
         {
             let mut log = CommitLog::create(&jdir, "ses_1").unwrap();
-            log.propose("cmd_a", EventKind::SessionStarted { client: "t".into(), client_version: "0".into() }).unwrap();
-            log.propose("cmd_b", EventKind::TurnStarted { turn: 1 }).unwrap();
+            log.propose(
+                "cmd_a",
+                EventKind::SessionStarted {
+                    client: "t".into(),
+                    client_version: "0".into(),
+                },
+            )
+            .unwrap();
+            log.propose("cmd_b", EventKind::TurnStarted { turn: 1 })
+                .unwrap();
             let mut artifacts = ArtifactStore::open(&blobs, &db).unwrap();
-            let reference = artifacts.put(b"tool output", "text/plain", "ses_1", Retention::Session, CredentialClass::Plain, None).unwrap();
+            let reference = artifacts
+                .put(
+                    b"tool output",
+                    "text/plain",
+                    "ses_1",
+                    Retention::Session,
+                    CredentialClass::Plain,
+                    None,
+                )
+                .unwrap();
             log.propose(
                 "cmd_c",
                 EventKind::ArtifactStored {
@@ -240,8 +272,16 @@ mod tests {
         let mut store = ProjectionStore::open(&db).unwrap();
         let n = store.rebuild(&jdir, "ses_1").unwrap();
         assert_eq!(n, 3);
-        let kinds: Vec<String> = store.list_events("ses_1", 0, 10).unwrap().into_iter().map(|e| e.kind).collect();
-        assert_eq!(kinds, vec!["session-started", "turn-started", "artifact-stored"]);
+        let kinds: Vec<String> = store
+            .list_events("ses_1", 0, 10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["session-started", "turn-started", "artifact-stored"]
+        );
 
         // The artifact bytes are still readable after the restart.
         let artifacts = ArtifactStore::open(&blobs, &db).unwrap();
