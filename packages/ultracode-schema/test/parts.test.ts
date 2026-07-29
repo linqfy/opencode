@@ -1,44 +1,37 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import { UltraContentPart, UltraContentPartJson, ToolResultMeta, ReasoningProvenance } from "../src/content/parts"
+import { decodeUltraPart, encodeUltraPart, ToolResultMeta, ReasoningProvenance } from "../src/content/parts"
 
 describe("UltraContentPart", () => {
   test("decodes imported llm parts through the extended union", () => {
-    const text = Schema.decodeUnknownSync(UltraContentPart)({ type: "text", text: "hello" })
+    const text = decodeUltraPart(JSON.stringify({ type: "text", text: "hello" }))
     expect(text.type).toBe("text")
-    const media = Schema.decodeUnknownSync(UltraContentPart)({ type: "media", mediaType: "image/png", data: "AQI=" })
+    const media = decodeUltraPart(JSON.stringify({ type: "media", mediaType: "image/png", data: "AQI=" }))
     expect(media.type).toBe("media")
   })
 
   test("decodes refusal, citation, and artifact-ref parts", () => {
-    const refusal = Schema.decodeUnknownSync(UltraContentPart)({ type: "refusal", text: "cannot comply" })
+    const refusal = decodeUltraPart(JSON.stringify({ type: "refusal", text: "cannot comply" }))
     expect(refusal.type).toBe("refusal")
-    const citation = Schema.decodeUnknownSync(UltraContentPart)({
-      type: "citation",
-      quotedText: "exact words",
-      url: "https://example.com",
-      trust: "untrusted",
-    })
+    const citation = decodeUltraPart(
+      JSON.stringify({ type: "citation", quotedText: "exact words", url: "https://example.com", trust: "untrusted" }),
+    )
     expect(citation.type).toBe("citation")
-    const artifact = Schema.decodeUnknownSync(UltraContentPart)({
-      type: "artifact-ref",
-      artifactId: "art_01J",
-      mime: "text/plain",
-      byteLength: 8192,
-      hash: "a".repeat(64),
-    })
+    const artifact = decodeUltraPart(
+      JSON.stringify({ type: "artifact-ref", artifactId: "art_01J", mime: "text/plain", byteLength: 8192, hash: "a".repeat(64) }),
+    )
     expect(artifact.type).toBe("artifact-ref")
   })
 
   test("round-trips through JSON preserving structure", () => {
     const part = { type: "artifact-ref", artifactId: "art_01J", mime: "text/plain", byteLength: 10, hash: "a".repeat(64) } as const
-    const json = Schema.encodeSync(UltraContentPartJson)(part)
-    const back = Schema.decodeUnknownSync(UltraContentPartJson)(json)
+    const json = encodeUltraPart(part)
+    const back = decodeUltraPart(json)
     expect(back).toEqual(part)
   })
 
   test("rejects an unknown part type", () => {
-    expect(() => Schema.decodeUnknownSync(UltraContentPart)({ type: "telepathy", data: {} })).toThrow()
+    expect(() => decodeUltraPart(JSON.stringify({ type: "telepathy", data: {} }))).toThrow()
   })
 })
 

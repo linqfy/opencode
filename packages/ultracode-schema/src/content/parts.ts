@@ -47,7 +47,19 @@ export const UltraContentPart = Schema.Union([
   ArtifactRefPart,
 ])
 export type UltraContentPart = typeof UltraContentPart.Type
-export const UltraContentPartJson = Schema.fromJsonString(UltraContentPart)
+
+// The llm tool-call/tool-result members carry provider-opaque `Unknown`
+// payloads, so the union's coding services type as `any` and the sync codec
+// helpers reject it. These wrappers are the single sanctioned call sites for
+// sync JSON round-trips of canonical parts; services are type-level only.
+export const UltraContentPartJson = Schema.fromJsonString(
+  UltraContentPart as unknown as Schema.Codec<UltraContentPart>,
+)
+export const decodeUltraPart = Schema.decodeUnknownSync(UltraContentPartJson)
+export const encodeUltraPart = Schema.encodeSync(UltraContentPartJson)
+export const UltraContentArrayJson = Schema.fromJsonString(
+  Schema.Array(UltraContentPart as unknown as Schema.Codec<UltraContentPart>),
+)
 
 // Addon metadata for tool results (spec section 6 "Every tool result preserves").
 export const ToolResultMeta = Schema.Struct({
