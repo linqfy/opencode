@@ -32,6 +32,7 @@ pub fn verify_record(record: &Record) -> bool {
     }
 }
 
+#[derive(Debug)]
 pub struct JournalWriter {
     dir: PathBuf,
     session: String,
