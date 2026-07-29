@@ -56,7 +56,7 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
-import { compileSystemPrompt } from "@ultracode/context"
+import { buildSystemPlan, compileContext } from "@ultracode/context"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1262,18 +1262,20 @@ const layer = Layer.effect(
             ])
 
             const format = lastUser.format ?? { type: "text" as const }
-            
-            const system = yield* compileSystemPrompt({
-              agent: agent.name,
-              model: model.id,
-              permission: session.permission,
-              environment: env,
-              instructions: instructions,
-              mcpInstructions: mcpInstructions,
-              skills: skills,
-              format: format,
-              agentInstructions: agent.prompt,
-            })
+            const compiled = compileContext(
+              buildSystemPlan({
+                environment: env,
+                instructions: instructions,
+                mcpInstructions: mcpInstructions,
+                skills: skills,
+                agentInstructions: agent.prompt,
+                structuredOutput: format.type === "json_schema",
+                modelContextLimit: model.limit.context ?? 200_000,
+                outputReserve: model.limit.output ?? 32_000,
+                userContentTokens: 0,
+              }),
+            )
+            const system = [...compiled.system]
             const result = yield* handle.process({
               user: lastUser,
               agent,

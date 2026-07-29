@@ -10,7 +10,7 @@
     "typecheck": "tsgo --noEmit"
   },
   "exports": {
-    ".": "./src/compiler.ts"
+    ".": "./src/index.ts"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
