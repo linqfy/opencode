@@ -1,6 +1,6 @@
 // Integration layer: adapt OpenCode V2 Skill.Info + Source into the unified
 // model, apply unified resolution (precedence + conflict detection), and map
-// survivors back to V2 Skill.Info. Pure — no @opencode-ai/core imports; operates
+// survivors back to V2 Skill.Info. Pure — no OpenCode core imports; operates
 // on plain data shapes matching the V2 Skill.Info contract.
 
 import { contentHash, estimateTokens, resolveSkills, type Skill, type SkillSource } from "./index"
