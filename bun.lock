@@ -1041,6 +1041,15 @@
         "@typescript/native-preview": "catalog:",
       },
     },
+    "packages/ultracode-memory": {
+      "name": "@ultracode/memory",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+      },
+    },
     "packages/ultracode-schema": {
       "name": "@ultracode/schema",
       "version": "0.0.1",
@@ -3034,6 +3043,8 @@
     "@typespec/ts-http-runtime": ["@typespec/ts-http-runtime@0.3.5", "", { "dependencies": { "http-proxy-agent": "^7.0.0", "https-proxy-agent": "^7.0.0", "tslib": "^2.6.2" } }, "sha512-yURCknZhvywvQItHMMmFSo+fq5arCUIyz/CVk7jD89MSai7dkaX8ufjCWp3NttLojoTVbcE72ri+be/TnEbMHw=="],
 
     "@ultracode/context": ["@ultracode/context@workspace:packages/ultracode-context"],
+
+    "@ultracode/memory": ["@ultracode/memory@workspace:packages/ultracode-memory"],
 
     "@ultracode/schema": ["@ultracode/schema@workspace:packages/ultracode-schema"],
 
