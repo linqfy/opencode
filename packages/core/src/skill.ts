@@ -3,6 +3,7 @@ export * as SkillV2 from "./skill"
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
 import { Context, Effect, Layer, Schema, Types } from "effect"
+import { mapSourceToSkillSource, resolveSkillInfos, type SkillSource } from "@ultracode/skills"
 import { Skill } from "@opencode-ai/schema/skill"
 import { AgentV2 } from "./agent"
 import { ConfigMarkdown } from "./config/markdown"
@@ -108,14 +109,15 @@ const layer = Layer.effect(
     // events, following the reload policy chosen for other context sources?
     const cache = new Map<string, Info[]>()
     const list = Effect.fn("SkillV2.list")(function* () {
-      const skills = new Map<string, Info>()
+      const resolvable: { info: Info; source: SkillSource }[] = []
       for (const source of state.get().sources) {
         const key = Source.key(source)
         const loaded = cache.get(key) ?? (yield* load(source))
         cache.set(key, loaded)
-        for (const skill of loaded) skills.set(skill.name, skill)
+        const skillSource = mapSourceToSkillSource(source)
+        for (const skill of loaded) resolvable.push({ info: skill, source: skillSource })
       }
-      return Array.from(skills.values())
+      return resolveSkillInfos(resolvable)
     })
 
     return Service.of({
