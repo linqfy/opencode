@@ -30,8 +30,8 @@ export const mapSourceToSkillSource = (source: { readonly type: string }): Skill
   }
 }
 
-export interface ResolvableSkill {
-  readonly info: SkillInfo
+export interface ResolvableSkill<T extends SkillInfo = SkillInfo> {
+  readonly info: T
   readonly source: SkillSource
 }
 
@@ -48,21 +48,17 @@ const toUnified = ({ info, source }: ResolvableSkill): Skill => ({
 
 // Apply unified resolution to V2 skills and map survivors back to SkillInfo,
 // preserving the original SkillInfo (description/location/slash) for each
-// survivor (matched by name + content).
-export const resolveSkillInfos = (skills: readonly ResolvableSkill[]): SkillInfo[] => {
+// survivor. For identical content at the same precedence level (which dedups),
+// the LAST registered source's metadata wins — matching OpenCode V2's
+// last-write-wins behavior. Match by name + content hash, taking the last match.
+export const resolveSkillInfos = <T extends SkillInfo>(skills: readonly ResolvableSkill<T>[]): T[] => {
   const unified = skills.map(toUnified)
   const resolved = resolveSkills(unified)
   return resolved.map((skill) => {
-    const original = skills.find(
+    const original = [...skills].reverse().find(
       ({ info }) => info.name === skill.name && contentHash(info.content) === skill.contentHash,
     )
-    return (
-      original?.info ?? {
-        name: skill.name,
-        description: skill.description,
-        location: skill.location,
-        content: skill.content,
-      }
-    )
+    if (!original) throw new Error(`Resolved skill ${skill.name} has no original SkillInfo`)
+    return original.info
   })
 }
