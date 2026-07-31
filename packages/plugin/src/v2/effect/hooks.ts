@@ -40,8 +40,8 @@ export interface Hooks {
     callback: (event: TurnCompleted) => Effect.Effect<void> | void,
   ) => Effect.Effect<Registration, never, Scope.Scope>
   /**
-   * Reserved for an explicit artifact authority. This hook is not emitted by
-   * current tool-output persistence; callers may only receive explicit dispatch.
+   * Emitted only by an explicit future artifact authority. Current tool-output
+   * persistence does not emit this hook; tests may use explicit dispatch.
    */
   readonly onArtifactStored: (
     callback: (event: ArtifactStored) => Effect.Effect<void> | void,
