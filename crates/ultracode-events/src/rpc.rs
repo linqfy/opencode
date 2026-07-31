@@ -595,21 +595,47 @@ mod tests {
                 json!({ "key": "request", "kind": requested }),
             ),
         );
-        handle_request(&mut state, &req(2, "claim_memory_job", json!({})));
+        let failed_kind = json!({
+            "kind": "memory-job-failed",
+            "data": { "request_id": "req-failed", "reason": "invalid memory job" }
+        });
+        let pending_failure = handle_request(
+            &mut state,
+            &req(
+                2,
+                "propose_commit",
+                json!({ "key": "memory-job-failed:req-failed", "kind": failed_kind }),
+            ),
+        );
+        assert!(pending_failure.error.unwrap().contains("not running"));
+        assert_eq!(state.projections.count().unwrap(), 1);
+        state.projections.rebuild(&journal, "ses_1").unwrap();
+        assert_eq!(state.projections.count().unwrap(), 1);
+        let claimed = handle_request(&mut state, &req(3, "claim_memory_job", json!({})))
+            .result
+            .unwrap();
+        assert_eq!(claimed["request_id"], "req-failed");
         let failed = handle_request(
             &mut state,
             &req(
-                3,
+                4,
                 "propose_commit",
-                json!({ "key": "memory-job-failed:req-failed", "kind": {
-                    "kind": "memory-job-failed", "data": { "request_id": "req-failed", "reason": "invalid memory job" }
-                }}),
+                json!({ "key": "memory-job-failed:req-failed", "kind": failed_kind }),
             ),
         );
         assert!(failed.error.is_none());
+        let duplicate = handle_request(
+            &mut state,
+            &req(
+                5,
+                "propose_commit",
+                json!({ "key": "memory-job-failed:req-failed", "kind": failed_kind }),
+            ),
+        );
+        assert_eq!(duplicate.result.unwrap()["duplicate"], true);
         state.projections.rebuild(&journal, "ses_1").unwrap();
         assert_eq!(
-            handle_request(&mut state, &req(4, "claim_memory_job", json!({})))
+            handle_request(&mut state, &req(6, "claim_memory_job", json!({})))
                 .result
                 .unwrap(),
             Value::Null

@@ -343,11 +343,12 @@ impl ProjectionStore {
     pub fn validate_memory_result(&self, kind: &EventKind) -> Result<(), String> {
         let (request_id, expected_kind) = match kind {
             EventKind::MemoryExtracted { request_id, .. } => {
-                (request_id, "memory-extraction-requested")
+                (request_id, Some("memory-extraction-requested"))
             }
             EventKind::MemoryConsolidated { request_id, .. } => {
-                (request_id, "memory-consolidation-requested")
+                (request_id, Some("memory-consolidation-requested"))
             }
+            EventKind::MemoryJobFailed { request_id, .. } => (request_id, None),
             _ => return Ok(()),
         };
         let job: Option<(String, String)> = self
@@ -362,8 +363,10 @@ impl ProjectionStore {
         let Some((actual_kind, status)) = job else {
             return Err(format!("missing memory request: {request_id}"));
         };
-        if actual_kind != expected_kind {
-            return Err(format!("memory request has wrong kind: {request_id}"));
+        if let Some(expected_kind) = expected_kind {
+            if actual_kind != expected_kind {
+                return Err(format!("memory request has wrong kind: {request_id}"));
+            }
         }
         if status != "running" {
             return Err(format!("memory request is not running: {request_id}"));
