@@ -8,7 +8,7 @@ import type {
   ToolProposed,
   TurnCompleted,
 } from "@opencode-ai/plugin/v2/effect"
-import { Cause, Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer, Scope } from "effect"
 import { makeLocationNode } from "../effect/app-node"
 import { EventV2 } from "../event"
 import { SessionEvent } from "../session/event"
@@ -49,7 +49,7 @@ const dispatch = <Event>(entries: Entry<Event>[], event: Event) =>
       Effect.suspend(() => {
         const result = entry.callback(event)
         return Effect.isEffect(result) ? Effect.asVoid(result) : Effect.void
-      }).pipe(Effect.catchCauseIf((cause) => !Cause.hasInterrupts(cause), () => Effect.void)),
+      }).pipe(Effect.catchCause(() => Effect.void)),
     { discard: true },
   )
 

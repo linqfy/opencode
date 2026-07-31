@@ -61,6 +61,25 @@ describe("PluginV2", () => {
     }),
   )
 
+  it.effect("isolates interrupted lifecycle hooks", () =>
+    Effect.gen(function* () {
+      const hooks = yield* Hooks.Service
+      let received = false
+      yield* hooks.onToolProposed(() => Effect.interrupt)
+      yield* hooks.onToolProposed(() => Effect.sync(() => (received = true)))
+
+      yield* hooks.emitToolProposed({
+        sessionID: "ses_interrupted",
+        assistantMessageID: "msg_assistant",
+        callID: "call_interrupted",
+        tool: "bash",
+        providerExecuted: false,
+      })
+
+      expect(received).toBe(true)
+    }),
+  )
+
   it.effect("maps live V2 session events to lifecycle hooks", () =>
     Effect.gen(function* () {
       const events = yield* EventV2.Service
