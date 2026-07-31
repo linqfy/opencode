@@ -175,6 +175,10 @@ pub enum EventKind {
         source_thread_ids: Vec<String>,
         generated_at: u64,
     },
+    MemoryJobFailed {
+        request_id: String,
+        reason: String,
+    },
     MemoryUsageRecorded {
         thread_ids: Vec<String>,
         at_ms: u64,

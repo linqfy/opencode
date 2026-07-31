@@ -45,6 +45,15 @@ pub struct MemoryJob {
     pub data: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MemoryConsolidation {
+    pub memory_id: String,
+    pub summary: String,
+    pub memory: String,
+    pub source_thread_ids: Vec<String>,
+    pub generated_at: u64,
+}
+
 #[derive(Deserialize)]
 struct MemoryExtractionSource {
     source_session: String,
@@ -81,10 +90,24 @@ impl ProjectionStore {
                   cwd TEXT NOT NULL, git_branch TEXT, generated_at INTEGER NOT NULL,
                   usage_count INTEGER NOT NULL DEFAULT 0, last_usage INTEGER
               );
-              CREATE TABLE IF NOT EXISTS memory_jobs (
-                  request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL
-              );",
+               CREATE TABLE IF NOT EXISTS memory_jobs (
+                   request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL, failure_reason TEXT
+               );
+               CREATE TABLE IF NOT EXISTS memory_consolidations (
+                   memory_id TEXT PRIMARY KEY, summary TEXT NOT NULL, memory TEXT NOT NULL,
+                   source_thread_ids TEXT NOT NULL, generated_at INTEGER NOT NULL
+             );",
         )?;
+        let has_failure_reason = {
+            let mut statement = conn.prepare("PRAGMA table_info(memory_jobs)")?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            columns.iter().any(|column| column == "failure_reason")
+        };
+        if !has_failure_reason {
+            conn.execute("ALTER TABLE memory_jobs ADD COLUMN failure_reason TEXT", [])?;
+        }
         Ok(Self {
             conn,
             path: path.to_path_buf(),
@@ -161,8 +184,26 @@ impl ProjectionStore {
                     params![thread_id, source.source_session, source.source_turn, source.source_end_seq, source.transcript_artifact_id, source.extractor_version, source_updated_at, raw_memory, rollout_summary, rollout_slug, cwd, git_branch, generated_at],
                 )?;
             }
-            EventKind::MemoryConsolidated { request_id, .. } => {
-                self.complete_memory_job(request_id)?
+            EventKind::MemoryConsolidated {
+                request_id,
+                memory_id,
+                summary,
+                memory,
+                source_thread_ids,
+                generated_at,
+            } => {
+                self.complete_memory_job(request_id)?;
+                self.conn.execute(
+                    "INSERT INTO memory_consolidations (memory_id, summary, memory, source_thread_ids, generated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(memory_id) DO UPDATE SET summary = excluded.summary, memory = excluded.memory, source_thread_ids = excluded.source_thread_ids, generated_at = excluded.generated_at",
+                    params![memory_id, summary, memory, serde_json::to_string(source_thread_ids).map_err(|_| rusqlite::Error::InvalidParameterName("consolidation sources".into()))?, generated_at],
+                )?;
+            }
+            EventKind::MemoryJobFailed { request_id, reason } => {
+                self.conn.execute(
+                    "UPDATE memory_jobs SET status = 'failed', failure_reason = ?2 WHERE request_id = ?1 AND status != 'completed'",
+                    params![request_id, reason],
+                )?;
             }
             EventKind::MemoryUsageRecorded { thread_ids, at_ms } => {
                 for thread_id in thread_ids.iter().collect::<HashSet<_>>() {
@@ -218,7 +259,7 @@ impl ProjectionStore {
     pub fn rebuild(&mut self, journal_dir: &Path, session: &str) -> io::Result<usize> {
         self.conn
             .execute_batch(
-                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs;",
+                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs; DELETE FROM memory_consolidations;",
             )
             .map_err(io::Error::other)?;
         let opened = recovery::open(journal_dir, session).map_err(io::Error::other)?;
@@ -260,6 +301,31 @@ impl ProjectionStore {
         rows.collect()
     }
 
+    pub fn list_memory_consolidations(
+        &self,
+        limit: u64,
+    ) -> Result<Vec<MemoryConsolidation>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT memory_id, summary, memory, source_thread_ids, generated_at FROM memory_consolidations ORDER BY generated_at DESC, memory_id ASC LIMIT ?1")?;
+        let rows = stmt.query_map(params![limit.min(200)], |row| {
+            Ok(MemoryConsolidation {
+                memory_id: row.get(0)?,
+                summary: row.get(1)?,
+                memory: row.get(2)?,
+                source_thread_ids: serde_json::from_str(&row.get::<_, String>(3)?).map_err(
+                    |_| {
+                        rusqlite::Error::InvalidColumnType(
+                            3,
+                            "source_thread_ids".into(),
+                            rusqlite::types::Type::Text,
+                        )
+                    },
+                )?,
+                generated_at: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     pub fn claim_memory_job(&mut self) -> Result<Option<MemoryJob>, rusqlite::Error> {
         let job = self.conn.query_row("SELECT request_id, kind, data FROM memory_jobs WHERE status = 'pending' ORDER BY request_id ASC LIMIT 1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).optional()?;
         let Some((request_id, kind, data)) = job else {
@@ -274,29 +340,35 @@ impl ProjectionStore {
         }))
     }
 
-    pub fn fail_memory_job(&mut self, request_id: &str) -> Result<bool, rusqlite::Error> {
-        Ok(self.conn.execute("UPDATE memory_jobs SET status = 'pending' WHERE request_id = ?1 AND status = 'running'", params![request_id])? == 1)
-    }
-
     pub fn validate_memory_result(&self, kind: &EventKind) -> Result<(), String> {
-        let request_id = match kind {
-            EventKind::MemoryExtracted { request_id, .. }
-            | EventKind::MemoryConsolidated { request_id, .. } => request_id,
+        let (request_id, expected_kind) = match kind {
+            EventKind::MemoryExtracted { request_id, .. } => {
+                (request_id, "memory-extraction-requested")
+            }
+            EventKind::MemoryConsolidated { request_id, .. } => {
+                (request_id, "memory-consolidation-requested")
+            }
             _ => return Ok(()),
         };
-        let exists: bool = self
+        let job: Option<(String, String)> = self
             .conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM memory_jobs WHERE request_id = ?1)",
+                "SELECT kind, status FROM memory_jobs WHERE request_id = ?1",
                 params![request_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
+            .optional()
             .map_err(|error| error.to_string())?;
-        if exists {
-            Ok(())
-        } else {
-            Err(format!("missing memory request: {request_id}"))
+        let Some((actual_kind, status)) = job else {
+            return Err(format!("missing memory request: {request_id}"));
+        };
+        if actual_kind != expected_kind {
+            return Err(format!("memory request has wrong kind: {request_id}"));
         }
+        if status != "running" {
+            return Err(format!("memory request is not running: {request_id}"));
+        }
+        Ok(())
     }
 
     pub fn list_events(

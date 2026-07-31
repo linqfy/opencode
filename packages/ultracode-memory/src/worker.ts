@@ -23,7 +23,6 @@ export interface MemoryJob {
 
 export interface MemoryJobClient {
   readonly claimMemoryJob: () => Promise<MemoryJob | null>
-  readonly failMemoryJob: (requestId: string, reason: string) => Promise<void>
   readonly listMemoryRecords: (limit?: number) => Promise<readonly DurableMemoryRecord[]>
   readonly proposeCommit: (key: string, kind: { readonly kind: string; readonly data: unknown }) => Promise<void>
   readonly openTranscript: (artifactId: string, sourceSession: string) => Promise<string>
@@ -183,6 +182,9 @@ const consolidationRequest = (data: unknown): ConsolidationRequest | undefined =
 
 const fail = async (client: MemoryJobClient, requestId: string, reason: string): Promise<void> => {
   try {
-    await client.failMemoryJob(requestId, reason)
+    await client.proposeCommit(`memory-job-failed:${requestId}`, {
+      kind: "memory-job-failed",
+      data: { request_id: requestId, reason },
+    })
   } catch {}
 }

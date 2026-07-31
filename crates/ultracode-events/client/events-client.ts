@@ -34,6 +34,13 @@ export type MemoryRecord = {
   last_usage: number | null
 }
 export type MemoryJob = { request_id: string; kind: string; data: unknown }
+export type MemoryConsolidation = {
+  memory_id: string
+  summary: string
+  memory: string
+  source_thread_ids: string[]
+  generated_at: number
+}
 
 function hexEncode(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -54,6 +61,7 @@ export class EventsClient {
   private reader: ReadableStreamDefaultReader<Uint8Array>
   private buffer = ""
   private nextId = 1
+  private pending = Promise.resolve()
 
   private constructor(proc: Subprocess) {
     this.proc = proc
@@ -75,7 +83,16 @@ export class EventsClient {
     return new EventsClient(proc)
   }
 
-  private async call(method: string, params: unknown): Promise<any> {
+  private async call<Result>(method: string, params: unknown): Promise<Result> {
+    const result = this.pending.then(() => this.callDirect<Result>(method, params))
+    this.pending = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  private async callDirect<Result>(method: string, params: unknown): Promise<Result> {
     const id = this.nextId++
     const line = JSON.stringify({ id, method, params }) + "\n"
     this.proc.stdin.write(line)
@@ -89,7 +106,7 @@ export class EventsClient {
         if (raw.trim() === "") continue
         const response = JSON.parse(raw)
         if (response.error) throw new Error(response.error)
-        return response.result
+        return response.result as Result
       }
       const chunk = await this.reader.read()
       if (chunk.done) throw new Error("sidecar closed stdout")
@@ -98,35 +115,35 @@ export class EventsClient {
   }
 
   async ping(): Promise<{ ok: boolean }> {
-    return this.call("ping", {})
+    return this.call<{ ok: boolean }>("ping", {})
   }
 
   async proposeCommit(key: string, kind: unknown): Promise<ProposeResult> {
-    return this.call("propose_commit", { key, kind })
+    return this.call<ProposeResult>("propose_commit", { key, kind })
   }
 
   async listEvents(session: string, sinceSeq = 0, limit = 100): Promise<IndexedEvent[]> {
-    return this.call("list_events", { session, since_seq: sinceSeq, limit })
+    return this.call<IndexedEvent[]>("list_events", { session, since_seq: sinceSeq, limit })
   }
 
   async rebuildProjections(session: string): Promise<{ count: number }> {
-    return this.call("rebuild_projections", { session })
+    return this.call<{ count: number }>("rebuild_projections", { session })
   }
 
   async listMemoryRecords(limit = 200): Promise<MemoryRecord[]> {
-    return this.call("list_memory_records", { limit })
+    return this.call<MemoryRecord[]>("list_memory_records", { limit })
+  }
+
+  async listMemoryConsolidations(limit = 200): Promise<MemoryConsolidation[]> {
+    return this.call<MemoryConsolidation[]>("list_memory_consolidations", { limit })
   }
 
   async claimMemoryJob(): Promise<MemoryJob | null> {
-    return this.call("claim_memory_job", {})
-  }
-
-  async failMemoryJob(requestId: string, reason: string): Promise<{ ok: boolean }> {
-    return this.call("fail_memory_job", { request_id: requestId, reason })
+    return this.call<MemoryJob | null>("claim_memory_job", {})
   }
 
   async putArtifact(bytes: Uint8Array, mime: string, ownerScope: string, retention = "workspace", credentialClass = "plain"): Promise<ArtifactRef> {
-    return this.call("put_artifact", {
+    return this.call<ArtifactRef>("put_artifact", {
       bytes_hex: hexEncode(bytes),
       mime,
       owner_scope: ownerScope,
@@ -136,12 +153,12 @@ export class EventsClient {
   }
 
   async openRange(artifactId: string, scope: string, start = 0, end = Number.MAX_SAFE_INTEGER): Promise<Uint8Array> {
-    const result = await this.call("open_range", { artifact_id: artifactId, scope, start, end })
+    const result = await this.call<{ bytes_hex: string }>("open_range", { artifact_id: artifactId, scope, start, end })
     return hexDecode(result.bytes_hex)
   }
 
   async reconcileEffects(uncleanStop = true): Promise<EffectReconciliation[]> {
-    return this.call("reconcile_effects", { unclean_stop: uncleanStop })
+    return this.call<EffectReconciliation[]>("reconcile_effects", { unclean_stop: uncleanStop })
   }
 
   stop(): void {

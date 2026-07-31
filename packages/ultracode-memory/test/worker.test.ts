@@ -36,11 +36,9 @@ const record = (thread_id: string, overrides: Partial<DurableMemoryRecord> = {})
 
 const client = (job: MemoryJob | null, records: readonly DurableMemoryRecord[] = []) => {
   const commits: { key: string; kind: unknown }[] = []
-  const failures: { requestId: string; reason: string }[] = []
   const opened: { artifactId: string; sourceSession: string }[] = []
   const value: MemoryJobClient = {
     claimMemoryJob: async () => job,
-    failMemoryJob: async (requestId, reason) => void failures.push({ requestId, reason }),
     listMemoryRecords: async () => records,
     proposeCommit: async (key, kind) => void commits.push({ key, kind }),
     openTranscript: async (artifactId, sourceSession) => {
@@ -48,7 +46,7 @@ const client = (job: MemoryJob | null, records: readonly DurableMemoryRecord[] =
       return "immutable transcript"
     },
   }
-  return { client: value, commits, failures, opened }
+  return { client: value, commits, opened }
 }
 
 const dependencies = (
@@ -68,7 +66,6 @@ describe("processMemoryJob", () => {
 
     expect(await processMemoryJob(dependencies(fake.client))).toBe(false)
     expect(fake.commits).toEqual([])
-    expect(fake.failures).toEqual([])
   })
 
   test("extracts an immutable transcript and commits the exact extracted event", async () => {
@@ -101,8 +98,7 @@ describe("processMemoryJob", () => {
     const fake = client(extractionRequest({ source_turn: "four" }))
 
     expect(await processMemoryJob(dependencies(fake.client))).toBe(true)
-    expect(fake.commits).toEqual([])
-    expect(fake.failures).toEqual([{ requestId: "req-extract", reason: "invalid memory job" }])
+    expect(fake.commits).toEqual([{ key: "memory-job-failed:req-extract", kind: { kind: "memory-job-failed", data: { request_id: "req-extract", reason: "invalid memory job" } } }])
   })
 
   test("fails a model extraction error without committing", async () => {
@@ -117,8 +113,7 @@ describe("processMemoryJob", () => {
         }),
       ),
     ).toBe(true)
-    expect(fake.commits).toEqual([])
-    expect(fake.failures).toEqual([{ requestId: "req-extract", reason: "memory extraction failed" }])
+    expect(fake.commits).toEqual([{ key: "memory-job-failed:req-extract", kind: { kind: "memory-job-failed", data: { request_id: "req-extract", reason: "memory extraction failed" } } }])
   })
 
   test("consolidates only requested durable records and preserves source provenance", async () => {
@@ -168,8 +163,8 @@ describe("processMemoryJob", () => {
 
     expect(await processMemoryJob(dependencies(malformed.client))).toBe(true)
     expect(await processMemoryJob(dependencies(unknown.client))).toBe(true)
-    expect(malformed.failures).toEqual([{ requestId: "req-malformed", reason: "invalid memory job" }])
-    expect(unknown.failures).toEqual([{ requestId: "req-unknown", reason: "invalid memory job" }])
+    expect(malformed.commits).toEqual([{ key: "memory-job-failed:req-malformed", kind: { kind: "memory-job-failed", data: { request_id: "req-malformed", reason: "invalid memory job" } } }])
+    expect(unknown.commits).toEqual([{ key: "memory-job-failed:req-unknown", kind: { kind: "memory-job-failed", data: { request_id: "req-unknown", reason: "invalid memory job" } } }])
   })
 
   test("fails closed when a sidecar operation rejects", async () => {
@@ -182,7 +177,6 @@ describe("processMemoryJob", () => {
     }
 
     expect(await processMemoryJob(dependencies(failingClient))).toBe(true)
-    expect(fake.commits).toEqual([])
-    expect(fake.failures).toEqual([{ requestId: "req-extract", reason: "memory extraction failed" }])
+    expect(fake.commits).toEqual([{ key: "memory-job-failed:req-extract", kind: { kind: "memory-job-failed", data: { request_id: "req-extract", reason: "memory extraction failed" } } }])
   })
 })

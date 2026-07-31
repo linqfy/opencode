@@ -137,7 +137,9 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             let kind: EventKind =
                 serde_json::from_value(req.params.get("kind").cloned().ok_or("missing kind")?)
                     .map_err(|e| format!("bad kind: {e}"))?;
-            state.projections.validate_memory_result(&kind)?;
+            if !state.commit.contains_key(key) {
+                state.projections.validate_memory_result(&kind)?;
+            }
             let outcome = state.commit.propose(key, kind).map_err(|e| e.to_string())?;
             let (record, duplicate) = match outcome {
                 CommitOutcome::Committed(r) => (r, false),
@@ -202,6 +204,18 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             serde_json::to_value(records).map_err(|e| e.to_string())
         }
 
+        "list_memory_consolidations" => {
+            let limit = match req.params.get("limit") {
+                None => 200,
+                Some(value) => value.as_u64().ok_or("bad limit")?.min(200),
+            };
+            let records = state
+                .projections
+                .list_memory_consolidations(limit)
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(records).map_err(|e| e.to_string())
+        }
+
         "claim_memory_job" => match state
             .projections
             .claim_memory_job()
@@ -210,23 +224,6 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             None => Ok(Value::Null),
             Some(job) => serde_json::to_value(job).map_err(|e| e.to_string()),
         },
-
-        "fail_memory_job" => {
-            let request_id = req
-                .params
-                .get("request_id")
-                .and_then(|value| value.as_str())
-                .ok_or("missing request_id")?;
-            req.params
-                .get("reason")
-                .and_then(|value| value.as_str())
-                .ok_or("missing reason")?;
-            let ok = state
-                .projections
-                .fail_memory_job(request_id)
-                .map_err(|e| e.to_string())?;
-            Ok(json!({ "ok": ok }))
-        }
 
         "put_artifact" => {
             let bytes_hex = req
@@ -471,12 +468,9 @@ mod tests {
     }
 
     #[test]
-    fn memory_rpcs_list_claim_and_fail_without_a_second_mutation_protocol() {
+    fn memory_results_require_a_running_request_of_the_matching_kind() {
         let (journal, db, blobs) = dirs("memory");
         let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
-        let missing = handle_request(&mut state, &req(1, "fail_memory_job", json!({})));
-        assert_eq!(missing.error.as_deref(), Some("missing request_id"));
-
         let missing_result = handle_request(
             &mut state,
             &req(
@@ -503,37 +497,43 @@ mod tests {
         assert!(handle_request(
             &mut state,
             &req(
-                3,
+                2,
                 "propose_commit",
                 json!({ "key": "request", "kind": requested })
             )
         )
         .error
         .is_none());
-        let claimed = handle_request(&mut state, &req(4, "claim_memory_job", json!({})))
+        let cross_kind = handle_request(
+            &mut state,
+            &req(
+                3,
+                "propose_commit",
+                json!({ "key": "cross-kind", "kind": { "kind": "memory-consolidated", "data": {
+                    "request_id": "req-a", "memory_id": "memory-a", "summary": "summary", "memory": "memory", "source_thread_ids": [], "generated_at": 2
+                }}}),
+            ),
+        );
+        assert!(cross_kind.error.unwrap().contains("wrong kind"));
+        assert_eq!(state.projections.count().unwrap(), 1);
+
+        let pending_result = handle_request(
+            &mut state,
+            &req(
+                4,
+                "propose_commit",
+                json!({ "key": "pending-result", "kind": { "kind": "memory-extracted", "data": {
+                    "request_id": "req-a", "thread_id": "thread-a", "source_updated_at": 1, "raw_memory": "raw", "rollout_summary": "summary", "rollout_slug": null, "cwd": "/repo", "git_branch": null, "generated_at": 2
+                }}}),
+            ),
+        );
+        assert!(pending_result.error.unwrap().contains("not running"));
+        assert_eq!(state.projections.count().unwrap(), 1);
+
+        let claimed = handle_request(&mut state, &req(5, "claim_memory_job", json!({})))
             .result
             .unwrap();
         assert_eq!(claimed["request_id"], "req-a");
-        assert_eq!(
-            handle_request(
-                &mut state,
-                &req(
-                    5,
-                    "fail_memory_job",
-                    json!({ "request_id": "req-a", "reason": "retry" })
-                )
-            )
-            .result
-            .unwrap()["ok"],
-            true
-        );
-        assert_eq!(
-            handle_request(&mut state, &req(6, "claim_memory_job", json!({})))
-                .result
-                .unwrap()["request_id"],
-            "req-a"
-        );
-
         let extracted = json!({ "kind": "memory-extracted", "data": {
             "request_id": "req-a", "thread_id": "thread-a", "source_updated_at": 1,
             "raw_memory": "raw", "rollout_summary": "summary", "rollout_slug": null,
@@ -542,7 +542,7 @@ mod tests {
         assert!(handle_request(
             &mut state,
             &req(
-                7,
+                6,
                 "propose_commit",
                 json!({ "key": "result", "kind": extracted })
             )
@@ -550,14 +550,14 @@ mod tests {
         .error
         .is_none());
         assert_eq!(
-            handle_request(&mut state, &req(8, "claim_memory_job", json!({})))
+            handle_request(&mut state, &req(7, "claim_memory_job", json!({})))
                 .result
                 .unwrap(),
             Value::Null
         );
         let records = handle_request(
             &mut state,
-            &req(9, "list_memory_records", json!({ "limit": 500 })),
+            &req(8, "list_memory_records", json!({ "limit": 500 })),
         )
         .result
         .unwrap();
@@ -571,11 +571,61 @@ mod tests {
         }
         let limited = handle_request(
             &mut state,
-            &req(10, "list_memory_records", json!({ "limit": 500 })),
+            &req(9, "list_memory_records", json!({ "limit": 500 })),
         )
         .result
         .unwrap();
         assert_eq!(limited.as_array().unwrap().len(), 200);
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn failed_memory_jobs_are_terminal_and_survive_a_rebuild() {
+        let (journal, db, blobs) = dirs("memory-failed");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let requested = json!({ "kind": "memory-extraction-requested", "data": {
+            "request_id": "req-failed", "source_session": "ses_1", "source_turn": 1,
+            "source_end_seq": 1, "transcript_artifact_id": "art-a", "extractor_version": "v1"
+        }});
+        handle_request(
+            &mut state,
+            &req(
+                1,
+                "propose_commit",
+                json!({ "key": "request", "kind": requested }),
+            ),
+        );
+        handle_request(&mut state, &req(2, "claim_memory_job", json!({})));
+        let failed = handle_request(
+            &mut state,
+            &req(
+                3,
+                "propose_commit",
+                json!({ "key": "memory-job-failed:req-failed", "kind": {
+                    "kind": "memory-job-failed", "data": { "request_id": "req-failed", "reason": "invalid memory job" }
+                }}),
+            ),
+        );
+        assert!(failed.error.is_none());
+        state.projections.rebuild(&journal, "ses_1").unwrap();
+        assert_eq!(
+            handle_request(&mut state, &req(4, "claim_memory_job", json!({})))
+                .result
+                .unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            state
+                .projections
+                .conn()
+                .query_row(
+                    "SELECT status, failure_reason FROM memory_jobs WHERE request_id = 'req-failed'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap(),
+            ("failed".to_string(), "invalid memory job".to_string())
+        );
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
 }

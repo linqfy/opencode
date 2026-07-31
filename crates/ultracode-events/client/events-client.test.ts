@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { EventsClient } from "./events-client"
+import { EventsMemoryJobClient } from "./events-memory-client"
+import { processMemoryJob } from "../../../packages/ultracode-memory/src/worker"
 
 // The sidecar binary is built by cargo into target/debug.
 const sidecarBin = join(import.meta.dir, "..", "..", "..", "target", "debug", process.platform === "win32" ? "sidecar.exe" : "sidecar")
@@ -11,15 +13,17 @@ describe("EventsClient", () => {
   let dir: string
   let client: EventsClient
 
+  const startClient = () => EventsClient.start({
+    sidecarBin,
+    journalDir: join(dir, "journal"),
+    db: join(dir, "proj.db"),
+    artifacts: join(dir, "blobs"),
+    session: "ses_1",
+  })
+
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "ultracode-client-"))
-    client = EventsClient.start({
-      sidecarBin,
-      journalDir: join(dir, "journal"),
-      db: join(dir, "proj.db"),
-      artifacts: join(dir, "blobs"),
-      session: "ses_1",
-    })
+    client = startClient()
   })
 
   afterAll(async () => {
@@ -35,7 +39,7 @@ describe("EventsClient", () => {
     }
   })
 
-  test("ping, commit, list, and artifact round trip", async () => {
+  test("sidecar client exposes durable memory workflows", async () => {
     expect(await client.ping()).toEqual({ ok: true })
 
     const committed = await client.proposeCommit("cmd_a", { kind: "turn-started", data: { turn: 1 } })
@@ -52,9 +56,6 @@ describe("EventsClient", () => {
     const reference = await client.putArtifact(new TextEncoder().encode("hello client"), "text/plain", "ses_1")
     const bytes = await client.openRange(reference.artifact_id, "ses_1", 0, 5)
     expect(new TextDecoder().decode(bytes)).toBe("hello")
-  })
-
-  test("memory wrappers round trip through the sidecar", async () => {
     await client.proposeCommit("memory-request", {
       kind: "memory-extraction-requested",
       data: {
@@ -66,8 +67,6 @@ describe("EventsClient", () => {
         extractor_version: "v1",
       },
     })
-    expect((await client.claimMemoryJob())?.request_id).toBe("req-client")
-    expect((await client.failMemoryJob("req-client", "retry")).ok).toBe(true)
     expect((await client.claimMemoryJob())?.request_id).toBe("req-client")
     await client.proposeCommit("memory-result", {
       kind: "memory-extracted",
@@ -87,5 +86,55 @@ describe("EventsClient", () => {
     expect(records).toHaveLength(1)
     expect(records[0].thread_id).toBe("thread-client")
     expect(await client.claimMemoryJob()).toBeNull()
+    await client.proposeCommit("consolidation-request", {
+      kind: "memory-consolidation-requested",
+      data: { request_id: "req-consolidation", record_thread_ids: ["thread-client"], consolidator_version: "v1" },
+    })
+    expect((await client.claimMemoryJob())?.request_id).toBe("req-consolidation")
+    await client.proposeCommit("consolidation-result", {
+      kind: "memory-consolidated",
+      data: {
+        request_id: "req-consolidation",
+        memory_id: "consolidated-client",
+        summary: "summary",
+        memory: "memory",
+        source_thread_ids: ["thread-client"],
+        generated_at: 10,
+      },
+    })
+    await client.rebuildProjections("ses_1")
+    client.stop()
+    await Bun.sleep(200)
+    client = startClient()
+    expect(await client.listMemoryConsolidations()).toEqual([
+      { memory_id: "consolidated-client", summary: "summary", memory: "memory", source_thread_ids: ["thread-client"], generated_at: 10 },
+    ])
+    const artifact = await client.putArtifact(new TextEncoder().encode("transcript"), "text/plain", "ses_1")
+    await client.proposeCommit("adapter-request", {
+      kind: "memory-extraction-requested",
+      data: {
+        request_id: "req-adapter",
+        source_session: "ses_1",
+        source_turn: 1,
+        source_end_seq: 1,
+        transcript_artifact_id: artifact.artifact_id,
+        extractor_version: "v1",
+      },
+    })
+
+    expect(
+      await processMemoryJob({
+        client: new EventsMemoryJobClient(client),
+        extract: async (transcript) => {
+          expect(transcript).toBe("transcript")
+          return JSON.stringify({ raw_memory: "extracted", rollout_summary: "summary", rollout_slug: null })
+        },
+        consolidate: async () => "",
+        now: () => 20,
+      }),
+    ).toBe(true)
+    expect(await client.listMemoryRecords()).toContainEqual(
+      expect.objectContaining({ thread_id: "memory:req-adapter", raw_memory: "extracted" }),
+    )
   })
 })
