@@ -1,9 +1,12 @@
 //! SQLite-WAL projections — always a projection of the journal, never canonical.
 //! The journal is the sole source of truth; `rebuild` truncates and replays.
 
-use crate::event::Record;
+use crate::event::{EventKind, Record};
 use crate::recovery;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +17,41 @@ pub struct IndexedEvent {
     pub kind: String,
     pub session: String,
     pub ts: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MemoryRecord {
+    pub thread_id: String,
+    pub source_session: String,
+    pub source_turn: u32,
+    pub source_end_seq: u64,
+    pub transcript_artifact_id: String,
+    pub extractor_version: String,
+    pub source_updated_at: u64,
+    pub raw_memory: String,
+    pub rollout_summary: String,
+    pub rollout_slug: Option<String>,
+    pub cwd: String,
+    pub git_branch: Option<String>,
+    pub generated_at: u64,
+    pub usage_count: u64,
+    pub last_usage: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MemoryJob {
+    pub request_id: String,
+    pub kind: String,
+    pub data: Value,
+}
+
+#[derive(Deserialize)]
+struct MemoryExtractionSource {
+    source_session: String,
+    source_turn: u32,
+    source_end_seq: u64,
+    transcript_artifact_id: String,
+    extractor_version: String,
 }
 
 pub struct ProjectionStore {
@@ -34,7 +72,18 @@ impl ProjectionStore {
                  session TEXT NOT NULL,
                  ts INTEGER NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_events_session ON events_index(session, seq);",
+              CREATE INDEX IF NOT EXISTS idx_events_session ON events_index(session, seq);
+              CREATE TABLE IF NOT EXISTS memory_records (
+                  thread_id TEXT PRIMARY KEY, source_session TEXT NOT NULL, source_turn INTEGER NOT NULL,
+                  source_end_seq INTEGER NOT NULL, transcript_artifact_id TEXT NOT NULL, extractor_version TEXT NOT NULL,
+                  source_updated_at INTEGER NOT NULL,
+                  raw_memory TEXT NOT NULL, rollout_summary TEXT NOT NULL, rollout_slug TEXT,
+                  cwd TEXT NOT NULL, git_branch TEXT, generated_at INTEGER NOT NULL,
+                  usage_count INTEGER NOT NULL DEFAULT 0, last_usage INTEGER
+              );
+              CREATE TABLE IF NOT EXISTS memory_jobs (
+                  request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL
+              );",
         )?;
         Ok(Self {
             conn,
@@ -74,14 +123,103 @@ impl ProjectionStore {
                 record.event.ts
             ],
         )?;
+        match &record.event.kind {
+            EventKind::MemoryExtractionRequested { request_id, .. }
+            | EventKind::MemoryConsolidationRequested { request_id, .. } => {
+                let value = serde_json::to_value(&record.event.kind)
+                    .map_err(|_| rusqlite::Error::InvalidParameterName("memory job data".into()))?;
+                let kind = value["kind"].as_str().ok_or_else(|| {
+                    rusqlite::Error::InvalidParameterName("memory job kind".into())
+                })?;
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO memory_jobs (request_id, kind, data, status) VALUES (?1, ?2, ?3, 'pending')",
+                    params![request_id, kind, value["data"].to_string()],
+                )?;
+            }
+            EventKind::MemoryExtracted {
+                request_id,
+                thread_id,
+                source_updated_at,
+                raw_memory,
+                rollout_summary,
+                rollout_slug,
+                cwd,
+                git_branch,
+                generated_at,
+            } => {
+                let source = self.memory_extraction_source(request_id)?;
+                self.complete_memory_job(request_id)?;
+                self.conn.execute(
+                    "INSERT INTO memory_records (thread_id, source_session, source_turn, source_end_seq, transcript_artifact_id, extractor_version, source_updated_at, raw_memory, rollout_summary, rollout_slug, cwd, git_branch, generated_at, usage_count, last_usage)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, NULL)
+                     ON CONFLICT(thread_id) DO UPDATE SET source_session = excluded.source_session, source_turn = excluded.source_turn,
+                     source_end_seq = excluded.source_end_seq, transcript_artifact_id = excluded.transcript_artifact_id, extractor_version = excluded.extractor_version,
+                     source_updated_at = excluded.source_updated_at, raw_memory = excluded.raw_memory,
+                     rollout_summary = excluded.rollout_summary, rollout_slug = excluded.rollout_slug, cwd = excluded.cwd,
+                     git_branch = excluded.git_branch, generated_at = excluded.generated_at
+                     WHERE excluded.source_updated_at >= memory_records.source_updated_at",
+                    params![thread_id, source.source_session, source.source_turn, source.source_end_seq, source.transcript_artifact_id, source.extractor_version, source_updated_at, raw_memory, rollout_summary, rollout_slug, cwd, git_branch, generated_at],
+                )?;
+            }
+            EventKind::MemoryConsolidated { request_id, .. } => {
+                self.complete_memory_job(request_id)?
+            }
+            EventKind::MemoryUsageRecorded { thread_ids, at_ms } => {
+                for thread_id in thread_ids.iter().collect::<HashSet<_>>() {
+                    self.conn.execute(
+                        "UPDATE memory_records SET usage_count = usage_count + 1, last_usage = ?2 WHERE thread_id = ?1",
+                        params![thread_id, at_ms],
+                    )?;
+                }
+            }
+            _ => {}
+        }
         Ok(())
+    }
+
+    fn complete_memory_job(&mut self, request_id: &str) -> Result<(), rusqlite::Error> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memory_jobs WHERE request_id = ?1)",
+            params![request_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "missing memory request: {request_id}"
+            )));
+        }
+        self.conn.execute(
+            "UPDATE memory_jobs SET status = 'completed' WHERE request_id = ?1",
+            params![request_id],
+        )?;
+        Ok(())
+    }
+
+    fn memory_extraction_source(
+        &self,
+        request_id: &str,
+    ) -> Result<MemoryExtractionSource, rusqlite::Error> {
+        let (kind, data): (String, String) = self.conn.query_row(
+            "SELECT kind, data FROM memory_jobs WHERE request_id = ?1",
+            params![request_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if kind != "memory-extraction-requested" {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "memory extraction request has wrong kind: {request_id}"
+            )));
+        }
+        serde_json::from_str(&data)
+            .map_err(|_| rusqlite::Error::InvalidParameterName("memory request data".into()))
     }
 
     /// Truncates the projection and replays the whole journal. Returns the
     /// number of events indexed.
     pub fn rebuild(&mut self, journal_dir: &Path, session: &str) -> io::Result<usize> {
         self.conn
-            .execute("DELETE FROM events_index", [])
+            .execute_batch(
+                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs;",
+            )
             .map_err(io::Error::other)?;
         let opened = recovery::open(journal_dir, session).map_err(io::Error::other)?;
         let mut count = 0usize;
@@ -89,7 +227,76 @@ impl ProjectionStore {
             self.index_record(record).map_err(io::Error::other)?;
             count += 1;
         }
+        self.conn
+            .execute(
+                "UPDATE memory_jobs SET status = 'pending' WHERE status = 'running'",
+                [],
+            )
+            .map_err(io::Error::other)?;
         Ok(count)
+    }
+
+    pub fn list_memory_records(&self, limit: u64) -> Result<Vec<MemoryRecord>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT thread_id, source_session, source_turn, source_end_seq, transcript_artifact_id, extractor_version, source_updated_at, raw_memory, rollout_summary, rollout_slug, cwd, git_branch, generated_at, usage_count, last_usage FROM memory_records ORDER BY usage_count DESC, last_usage DESC, source_updated_at DESC, thread_id ASC LIMIT ?1")?;
+        let rows = stmt.query_map(params![limit.min(200)], |row| {
+            Ok(MemoryRecord {
+                thread_id: row.get(0)?,
+                source_session: row.get(1)?,
+                source_turn: row.get(2)?,
+                source_end_seq: row.get(3)?,
+                transcript_artifact_id: row.get(4)?,
+                extractor_version: row.get(5)?,
+                source_updated_at: row.get(6)?,
+                raw_memory: row.get(7)?,
+                rollout_summary: row.get(8)?,
+                rollout_slug: row.get(9)?,
+                cwd: row.get(10)?,
+                git_branch: row.get(11)?,
+                generated_at: row.get(12)?,
+                usage_count: row.get(13)?,
+                last_usage: row.get(14)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn claim_memory_job(&mut self) -> Result<Option<MemoryJob>, rusqlite::Error> {
+        let job = self.conn.query_row("SELECT request_id, kind, data FROM memory_jobs WHERE status = 'pending' ORDER BY request_id ASC LIMIT 1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).optional()?;
+        let Some((request_id, kind, data)) = job else {
+            return Ok(None);
+        };
+        self.conn.execute("UPDATE memory_jobs SET status = 'running' WHERE request_id = ?1 AND status = 'pending'", params![request_id])?;
+        Ok(Some(MemoryJob {
+            request_id,
+            kind,
+            data: serde_json::from_str(&data)
+                .map_err(|_| rusqlite::Error::InvalidParameterName("memory job data".into()))?,
+        }))
+    }
+
+    pub fn fail_memory_job(&mut self, request_id: &str) -> Result<bool, rusqlite::Error> {
+        Ok(self.conn.execute("UPDATE memory_jobs SET status = 'pending' WHERE request_id = ?1 AND status = 'running'", params![request_id])? == 1)
+    }
+
+    pub fn validate_memory_result(&self, kind: &EventKind) -> Result<(), String> {
+        let request_id = match kind {
+            EventKind::MemoryExtracted { request_id, .. }
+            | EventKind::MemoryConsolidated { request_id, .. } => request_id,
+            _ => return Ok(()),
+        };
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM memory_jobs WHERE request_id = ?1)",
+                params![request_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if exists {
+            Ok(())
+        } else {
+            Err(format!("missing memory request: {request_id}"))
+        }
     }
 
     pub fn list_events(
@@ -302,6 +509,227 @@ mod tests {
         let bytes = artifacts.open_range(&artifact_id, "ses_1", 0, 100).unwrap();
         assert_eq!(bytes, b"tool output".to_vec());
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn memory_extracted(thread_id: &str, source_updated_at: u64, raw_memory: &str) -> EventKind {
+        EventKind::MemoryExtracted {
+            request_id: format!("req-{thread_id}-{source_updated_at}"),
+            thread_id: thread_id.into(),
+            source_updated_at,
+            raw_memory: raw_memory.into(),
+            rollout_summary: format!("summary-{raw_memory}"),
+            rollout_slug: Some("rollout".into()),
+            cwd: "/repo".into(),
+            git_branch: Some("main".into()),
+            generated_at: source_updated_at + 1,
+        }
+    }
+
+    fn memory_requested(request_id: &str) -> EventKind {
+        EventKind::MemoryExtractionRequested {
+            request_id: request_id.into(),
+            source_session: "ses_1".into(),
+            source_turn: 1,
+            source_end_seq: 1,
+            transcript_artifact_id: "art".into(),
+            extractor_version: "v1".into(),
+        }
+    }
+
+    #[test]
+    fn memory_live_index_and_rebuild_are_equivalent() {
+        let jdir = dir("memory-rebuild-j");
+        let dbdir = dir("memory-rebuild-db");
+        let _ = std::fs::remove_dir_all(&jdir);
+        let _ = std::fs::remove_dir_all(&dbdir);
+        std::fs::create_dir_all(&dbdir).unwrap();
+        let mut journal = JournalWriter::create(&jdir, "ses_1").unwrap();
+        let requested = journal
+            .append(
+                EventKind::MemoryExtractionRequested {
+                    request_id: "req-thread-a-10".into(),
+                    source_session: "ses_1".into(),
+                    source_turn: 1,
+                    source_end_seq: 2,
+                    transcript_artifact_id: "art-a".into(),
+                    extractor_version: "v1".into(),
+                },
+                None,
+            )
+            .unwrap();
+        let extracted = journal
+            .append(memory_extracted("thread-a", 10, "raw-a"), None)
+            .unwrap();
+        journal.commit_boundary().unwrap();
+
+        let mut live = ProjectionStore::open(&dbdir.join("live.db")).unwrap();
+        live.index_record(&requested).unwrap();
+        live.index_record(&extracted).unwrap();
+        let live_records = live.list_memory_records(200).unwrap();
+
+        let mut rebuilt = ProjectionStore::open(&dbdir.join("rebuilt.db")).unwrap();
+        rebuilt.rebuild(&jdir, "ses_1").unwrap();
+        assert_eq!(rebuilt.list_memory_records(200).unwrap(), live_records);
+        assert_eq!(rebuilt.claim_memory_job().unwrap(), None);
+        let _ = std::fs::remove_dir_all(&jdir);
+        let _ = std::fs::remove_dir_all(&dbdir);
+    }
+
+    #[test]
+    fn newer_memory_replaces_content_and_preserves_usage() {
+        let base = dir("memory-newer");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut store = ProjectionStore::open(&base.join("proj.db")).unwrap();
+        let mut journal = JournalWriter::create(&base.join("journal"), "ses_1").unwrap();
+        for kind in [
+            memory_requested("req-thread-a-10"),
+            memory_extracted("thread-a", 10, "old"),
+            EventKind::MemoryUsageRecorded {
+                thread_ids: vec!["thread-a".into()],
+                at_ms: 50,
+            },
+            memory_requested("req-thread-a-11"),
+            memory_extracted("thread-a", 11, "new"),
+            memory_requested("req-thread-a-9"),
+            memory_extracted("thread-a", 9, "stale"),
+        ] {
+            let record = journal.append(kind, None).unwrap();
+            store.index_record(&record).unwrap();
+        }
+        let record = store.list_memory_records(200).unwrap().pop().unwrap();
+        assert_eq!(record.raw_memory, "new");
+        assert_eq!(record.source_session, "ses_1");
+        assert_eq!(record.source_turn, 1);
+        assert_eq!(record.source_end_seq, 1);
+        assert_eq!(record.transcript_artifact_id, "art");
+        assert_eq!(record.extractor_version, "v1");
+        assert_eq!(record.usage_count, 1);
+        assert_eq!(record.last_usage, Some(50));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn memory_usage_is_deduplicated_and_records_are_ranked() {
+        let base = dir("memory-usage");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut store = ProjectionStore::open(&base.join("proj.db")).unwrap();
+        let mut journal = JournalWriter::create(&base.join("journal"), "ses_1").unwrap();
+        for kind in [
+            memory_requested("req-thread-c-2"),
+            memory_extracted("thread-c", 2, "c"),
+            memory_requested("req-thread-b-3"),
+            memory_extracted("thread-b", 3, "b"),
+            memory_requested("req-thread-a-3"),
+            memory_extracted("thread-a", 3, "a"),
+            EventKind::MemoryUsageRecorded {
+                thread_ids: vec![
+                    "thread-a".into(),
+                    "thread-a".into(),
+                    "thread-b".into(),
+                    "unknown".into(),
+                ],
+                at_ms: 10,
+            },
+            EventKind::MemoryUsageRecorded {
+                thread_ids: vec!["thread-a".into()],
+                at_ms: 11,
+            },
+        ] {
+            let record = journal.append(kind, None).unwrap();
+            store.index_record(&record).unwrap();
+        }
+        let records = store.list_memory_records(200).unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.thread_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-a", "thread-b", "thread-c"]
+        );
+        assert_eq!(records[0].usage_count, 2);
+        assert_eq!(records[0].last_usage, Some(11));
+        assert_eq!(records[1].usage_count, 1);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn memory_request_jobs_are_idempotent_and_restart_requeues_claims() {
+        let base = dir("memory-jobs");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut store = ProjectionStore::open(&base.join("proj.db")).unwrap();
+        let mut journal = JournalWriter::create(&base.join("journal"), "ses_1").unwrap();
+        for request_id in ["req-b", "req-a", "req-a"] {
+            let record = journal
+                .append(
+                    EventKind::MemoryExtractionRequested {
+                        request_id: request_id.into(),
+                        source_session: "ses_1".into(),
+                        source_turn: 1,
+                        source_end_seq: 1,
+                        transcript_artifact_id: "art".into(),
+                        extractor_version: "v1".into(),
+                    },
+                    None,
+                )
+                .unwrap();
+            store.index_record(&record).unwrap();
+        }
+        assert_eq!(
+            store.claim_memory_job().unwrap().unwrap().request_id,
+            "req-a"
+        );
+        assert!(store.claim_memory_job().unwrap().is_some());
+        store.rebuild(&base.join("journal"), "ses_1").unwrap();
+        assert_eq!(
+            store.claim_memory_job().unwrap().unwrap().request_id,
+            "req-a"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn extraction_result_completes_its_request_job() {
+        let base = dir("memory-complete");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut store = ProjectionStore::open(&base.join("proj.db")).unwrap();
+        let mut journal = JournalWriter::create(&base.join("journal"), "ses_1").unwrap();
+        let request = journal
+            .append(
+                EventKind::MemoryExtractionRequested {
+                    request_id: "req-a".into(),
+                    source_session: "ses_1".into(),
+                    source_turn: 1,
+                    source_end_seq: 1,
+                    transcript_artifact_id: "art".into(),
+                    extractor_version: "v1".into(),
+                },
+                None,
+            )
+            .unwrap();
+        store.index_record(&request).unwrap();
+        let result = journal
+            .append(
+                EventKind::MemoryExtracted {
+                    request_id: "req-a".into(),
+                    thread_id: "thread-a".into(),
+                    source_updated_at: 1,
+                    raw_memory: "raw".into(),
+                    rollout_summary: "summary".into(),
+                    rollout_slug: None,
+                    cwd: "/repo".into(),
+                    git_branch: None,
+                    generated_at: 2,
+                },
+                None,
+            )
+            .unwrap();
+        store.index_record(&result).unwrap();
+        assert_eq!(store.claim_memory_job().unwrap(), None);
         let _ = std::fs::remove_dir_all(&base);
     }
 }

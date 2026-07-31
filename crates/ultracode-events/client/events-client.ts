@@ -16,6 +16,24 @@ export type ProposeResult = { seq: number; hash: string; duplicate: boolean }
 export type IndexedEvent = { seq: number; id: string; kind: string; session: string; ts: number }
 export type ArtifactRef = { artifact_id: string; mime: string; byte_length: number; hash: string }
 export type EffectReconciliation = { idempotency_key: string; tool: string; state: string; action: string }
+export type MemoryRecord = {
+  thread_id: string
+  source_session: string
+  source_turn: number
+  source_end_seq: number
+  transcript_artifact_id: string
+  extractor_version: string
+  source_updated_at: number
+  raw_memory: string
+  rollout_summary: string
+  rollout_slug: string | null
+  cwd: string
+  git_branch: string | null
+  generated_at: number
+  usage_count: number
+  last_usage: number | null
+}
+export type MemoryJob = { request_id: string; kind: string; data: unknown }
 
 function hexEncode(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -93,6 +111,18 @@ export class EventsClient {
 
   async rebuildProjections(session: string): Promise<{ count: number }> {
     return this.call("rebuild_projections", { session })
+  }
+
+  async listMemoryRecords(limit = 200): Promise<MemoryRecord[]> {
+    return this.call("list_memory_records", { limit })
+  }
+
+  async claimMemoryJob(): Promise<MemoryJob | null> {
+    return this.call("claim_memory_job", {})
+  }
+
+  async failMemoryJob(requestId: string, reason: string): Promise<{ ok: boolean }> {
+    return this.call("fail_memory_job", { request_id: requestId, reason })
   }
 
   async putArtifact(bytes: Uint8Array, mime: string, ownerScope: string, retention = "workspace", credentialClass = "plain"): Promise<ArtifactRef> {

@@ -53,4 +53,39 @@ describe("EventsClient", () => {
     const bytes = await client.openRange(reference.artifact_id, "ses_1", 0, 5)
     expect(new TextDecoder().decode(bytes)).toBe("hello")
   })
+
+  test("memory wrappers round trip through the sidecar", async () => {
+    await client.proposeCommit("memory-request", {
+      kind: "memory-extraction-requested",
+      data: {
+        request_id: "req-client",
+        source_session: "ses_1",
+        source_turn: 1,
+        source_end_seq: 1,
+        transcript_artifact_id: "art-client",
+        extractor_version: "v1",
+      },
+    })
+    expect((await client.claimMemoryJob())?.request_id).toBe("req-client")
+    expect((await client.failMemoryJob("req-client", "retry")).ok).toBe(true)
+    expect((await client.claimMemoryJob())?.request_id).toBe("req-client")
+    await client.proposeCommit("memory-result", {
+      kind: "memory-extracted",
+      data: {
+        request_id: "req-client",
+        thread_id: "thread-client",
+        source_updated_at: 1,
+        raw_memory: "raw",
+        rollout_summary: "summary",
+        rollout_slug: null,
+        cwd: "/repo",
+        git_branch: null,
+        generated_at: 2,
+      },
+    })
+    const records = await client.listMemoryRecords(500)
+    expect(records).toHaveLength(1)
+    expect(records[0].thread_id).toBe("thread-client")
+    expect(await client.claimMemoryJob()).toBeNull()
+  })
 })

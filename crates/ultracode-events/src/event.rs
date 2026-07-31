@@ -143,6 +143,42 @@ pub enum EventKind {
         message_type: String,
         data: String,
     },
+    MemoryExtractionRequested {
+        request_id: String,
+        source_session: String,
+        source_turn: u32,
+        source_end_seq: u64,
+        transcript_artifact_id: String,
+        extractor_version: String,
+    },
+    MemoryExtracted {
+        request_id: String,
+        thread_id: String,
+        source_updated_at: u64,
+        raw_memory: String,
+        rollout_summary: String,
+        rollout_slug: Option<String>,
+        cwd: String,
+        git_branch: Option<String>,
+        generated_at: u64,
+    },
+    MemoryConsolidationRequested {
+        request_id: String,
+        record_thread_ids: Vec<String>,
+        consolidator_version: String,
+    },
+    MemoryConsolidated {
+        request_id: String,
+        memory_id: String,
+        summary: String,
+        memory: String,
+        source_thread_ids: Vec<String>,
+        generated_at: u64,
+    },
+    MemoryUsageRecorded {
+        thread_ids: Vec<String>,
+        at_ms: u64,
+    },
     /// Internal line written as the final line of a sealed segment at rotation.
     SegmentSeal {
         sealed_events: u64,
@@ -315,5 +351,65 @@ mod tests {
         assert!(json.contains("\"kind\":\"legacy-message-imported\""));
         let back: EventKind = serde_json::from_str(&json).unwrap();
         assert_eq!(back, message_kind);
+    }
+
+    #[test]
+    fn memory_event_kinds_round_trip_with_kebab_case_tags() {
+        let kinds = vec![
+            serde_json::json!({
+                "kind": "memory-extraction-requested",
+                "data": {
+                    "request_id": "req_extract",
+                    "source_session": "ses_1",
+                    "source_turn": 2,
+                    "source_end_seq": 10,
+                    "transcript_artifact_id": "art_1",
+                    "extractor_version": "v1"
+                }
+            }),
+            serde_json::json!({
+                "kind": "memory-extracted",
+                "data": {
+                    "request_id": "req_extract",
+                    "thread_id": "thread_1",
+                    "source_updated_at": 100,
+                    "raw_memory": "raw",
+                    "rollout_summary": "summary",
+                    "rollout_slug": "rollout",
+                    "cwd": "/repo",
+                    "git_branch": "main",
+                    "generated_at": 101
+                }
+            }),
+            serde_json::json!({
+                "kind": "memory-consolidation-requested",
+                "data": {
+                    "request_id": "req_consolidate",
+                    "record_thread_ids": ["thread_1"],
+                    "consolidator_version": "v1"
+                }
+            }),
+            serde_json::json!({
+                "kind": "memory-consolidated",
+                "data": {
+                    "request_id": "req_consolidate",
+                    "memory_id": "mem_1",
+                    "summary": "summary",
+                    "memory": "memory",
+                    "source_thread_ids": ["thread_1"],
+                    "generated_at": 102
+                }
+            }),
+            serde_json::json!({
+                "kind": "memory-usage-recorded",
+                "data": { "thread_ids": ["thread_1"], "at_ms": 103 }
+            }),
+        ];
+
+        for json in kinds {
+            let kind: EventKind =
+                serde_json::from_value(json.clone()).expect("memory event parses");
+            assert_eq!(serde_json::to_value(kind).unwrap(), json);
+        }
     }
 }

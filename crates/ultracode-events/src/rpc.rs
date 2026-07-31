@@ -137,6 +137,7 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             let kind: EventKind =
                 serde_json::from_value(req.params.get("kind").cloned().ok_or("missing kind")?)
                     .map_err(|e| format!("bad kind: {e}"))?;
+            state.projections.validate_memory_result(&kind)?;
             let outcome = state.commit.propose(key, kind).map_err(|e| e.to_string())?;
             let (record, duplicate) = match outcome {
                 CommitOutcome::Committed(r) => (r, false),
@@ -187,6 +188,44 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .rebuild(&state.journal_dir.clone(), session)
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "count": count }))
+        }
+
+        "list_memory_records" => {
+            let limit = match req.params.get("limit") {
+                None => 200,
+                Some(value) => value.as_u64().ok_or("bad limit")?.min(200),
+            };
+            let records = state
+                .projections
+                .list_memory_records(limit)
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(records).map_err(|e| e.to_string())
+        }
+
+        "claim_memory_job" => match state
+            .projections
+            .claim_memory_job()
+            .map_err(|e| e.to_string())?
+        {
+            None => Ok(Value::Null),
+            Some(job) => serde_json::to_value(job).map_err(|e| e.to_string()),
+        },
+
+        "fail_memory_job" => {
+            let request_id = req
+                .params
+                .get("request_id")
+                .and_then(|value| value.as_str())
+                .ok_or("missing request_id")?;
+            req.params
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .ok_or("missing reason")?;
+            let ok = state
+                .projections
+                .fail_memory_job(request_id)
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "ok": ok }))
         }
 
         "put_artifact" => {
@@ -428,6 +467,115 @@ mod tests {
         let resp = handle_request(&mut state, &req(1, "nope", json!({})));
         assert!(resp.result.is_none());
         assert!(resp.error.unwrap().contains("unknown method"));
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn memory_rpcs_list_claim_and_fail_without_a_second_mutation_protocol() {
+        let (journal, db, blobs) = dirs("memory");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let missing = handle_request(&mut state, &req(1, "fail_memory_job", json!({})));
+        assert_eq!(missing.error.as_deref(), Some("missing request_id"));
+
+        let missing_result = handle_request(
+            &mut state,
+            &req(
+                2,
+                "propose_commit",
+                json!({
+                    "key": "missing-result", "kind": { "kind": "memory-extracted", "data": {
+                        "request_id": "missing", "thread_id": "thread-missing", "source_updated_at": 1,
+                        "raw_memory": "raw", "rollout_summary": "summary", "rollout_slug": null,
+                        "cwd": "/repo", "git_branch": null, "generated_at": 2
+                    }}
+                }),
+            ),
+        );
+        assert!(missing_result
+            .error
+            .unwrap()
+            .contains("missing memory request"));
+
+        let requested = json!({ "kind": "memory-extraction-requested", "data": {
+            "request_id": "req-a", "source_session": "ses_1", "source_turn": 1,
+            "source_end_seq": 1, "transcript_artifact_id": "art-a", "extractor_version": "v1"
+        }});
+        assert!(handle_request(
+            &mut state,
+            &req(
+                3,
+                "propose_commit",
+                json!({ "key": "request", "kind": requested })
+            )
+        )
+        .error
+        .is_none());
+        let claimed = handle_request(&mut state, &req(4, "claim_memory_job", json!({})))
+            .result
+            .unwrap();
+        assert_eq!(claimed["request_id"], "req-a");
+        assert_eq!(
+            handle_request(
+                &mut state,
+                &req(
+                    5,
+                    "fail_memory_job",
+                    json!({ "request_id": "req-a", "reason": "retry" })
+                )
+            )
+            .result
+            .unwrap()["ok"],
+            true
+        );
+        assert_eq!(
+            handle_request(&mut state, &req(6, "claim_memory_job", json!({})))
+                .result
+                .unwrap()["request_id"],
+            "req-a"
+        );
+
+        let extracted = json!({ "kind": "memory-extracted", "data": {
+            "request_id": "req-a", "thread_id": "thread-a", "source_updated_at": 1,
+            "raw_memory": "raw", "rollout_summary": "summary", "rollout_slug": null,
+            "cwd": "/repo", "git_branch": null, "generated_at": 2
+        }});
+        assert!(handle_request(
+            &mut state,
+            &req(
+                7,
+                "propose_commit",
+                json!({ "key": "result", "kind": extracted })
+            )
+        )
+        .error
+        .is_none());
+        assert_eq!(
+            handle_request(&mut state, &req(8, "claim_memory_job", json!({})))
+                .result
+                .unwrap(),
+            Value::Null
+        );
+        let records = handle_request(
+            &mut state,
+            &req(9, "list_memory_records", json!({ "limit": 500 })),
+        )
+        .result
+        .unwrap();
+        assert_eq!(records.as_array().unwrap().len(), 1);
+        assert_eq!(records[0]["usage_count"], 0);
+        for index in 0..200 {
+            state.projections.conn_mut().execute(
+                "INSERT INTO memory_records (thread_id, source_session, source_turn, source_end_seq, transcript_artifact_id, extractor_version, source_updated_at, raw_memory, rollout_summary, cwd, generated_at, usage_count) VALUES (?1, 'ses_1', 1, 1, 'art', 'v1', 1, 'raw', 'summary', '/repo', 1, 0)",
+                rusqlite::params![format!("thread-limit-{index}")],
+            ).unwrap();
+        }
+        let limited = handle_request(
+            &mut state,
+            &req(10, "list_memory_records", json!({ "limit": 500 })),
+        )
+        .result
+        .unwrap();
+        assert_eq!(limited.as_array().unwrap().len(), 200);
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
 }
