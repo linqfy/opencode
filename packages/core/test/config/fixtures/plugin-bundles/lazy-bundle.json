@@ -1,0 +1,12 @@
+{
+  "id": "config-lazy-bundle",
+  "version": "1.0.0",
+  "provenance": {
+    "source": "test",
+    "location": "fixture"
+  },
+  "permissions": [],
+  "startup": "lazy",
+  "contributions": {},
+  "entrypoint": "./lazy-bundle.ts"
+}

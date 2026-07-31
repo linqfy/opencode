@@ -1,4 +1,5 @@
 export * as PluginV2 from "./plugin"
+export * as Bundle from "./plugin/bundle"
 export * as Hooks from "./plugin/hooks"
 
 import { makeLocationNode } from "./effect/app-node"

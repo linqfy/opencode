@@ -7,7 +7,7 @@ import { ConfigExternalPlugin } from "@opencode-ai/core/config/plugin/external"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Location } from "@opencode-ai/core/location"
 import { Npm } from "@opencode-ai/core/npm"
-import { PluginV2 } from "@opencode-ai/core/plugin"
+import { Bundle, PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { testEffect } from "../lib/effect"
@@ -236,6 +236,40 @@ describe("ConfigExternalPlugin", () => {
       })
     }),
   )
+
+  it.live("discovers directory bundles without importing their entrypoints", () =>
+    Effect.gen(function* () {
+      const plugins = yield* PluginV2.Service
+      const bundles = yield* Bundle.Service
+      const fs = yield* FSUtil.Service
+      const location = yield* Location.Service
+      const npm = yield* Npm.Service
+      const host = yield* PluginHost.make(plugins)
+      delete process.env.OPENCODE_TEST_LAZY_BUNDLE_IMPORTED
+
+      yield* ConfigExternalPlugin.Plugin.effect(host).pipe(
+        Effect.provideService(PluginV2.Service, plugins),
+        Effect.provideService(FSUtil.Service, fs),
+        Effect.provideService(Location.Service, location),
+        Effect.provideService(Npm.Service, npm),
+        Effect.provideService(
+          Config.Service,
+          Config.Service.of({
+            entries: () =>
+              Effect.succeed([
+                new Config.Directory({
+                  type: "directory",
+                  path: AbsolutePath.make(path.join(import.meta.dir, "fixtures")),
+                }),
+              ]),
+          }),
+        ),
+      )
+
+      expect(yield* waitForBundle(bundles, "config-lazy-bundle")).toMatchObject({ status: "discovered" })
+      expect(process.env.OPENCODE_TEST_LAZY_BUNDLE_IMPORTED).toBeUndefined()
+    }),
+  )
 })
 
 const waitForAgent = Effect.fnUntraced(function* (agents: AgentV2.Interface, id: string) {
@@ -245,4 +279,13 @@ const waitForAgent = Effect.fnUntraced(function* (agents: AgentV2.Interface, id:
     yield* Effect.sleep("10 millis")
   }
   return yield* Effect.die(`Timed out waiting for agent ${id}`)
+})
+
+const waitForBundle = Effect.fnUntraced(function* (bundles: Bundle.Interface, id: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const bundle = (yield* bundles.list()).find((item) => item.manifest.id === id)
+    if (bundle) return bundle
+    yield* Effect.sleep("10 millis")
+  }
+  return yield* Effect.die(`Timed out waiting for plugin bundle ${id}`)
 })

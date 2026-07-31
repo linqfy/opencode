@@ -9,6 +9,7 @@ import { Config } from "../../config"
 import { FSUtil } from "../../fs-util"
 import { Location } from "../../location"
 import { Npm } from "../../npm"
+import { Bundle } from "../../plugin/bundle"
 import { define } from "../../plugin/internal"
 import { PluginPromise } from "../../plugin/promise"
 
@@ -29,6 +30,15 @@ const PluginModule = Schema.Struct({
   ]),
 })
 
+const BundleFile = Schema.Struct({ entrypoint: Schema.String })
+const decodeBundleFile = Schema.decodeUnknownSync(BundleFile)
+
+const decodePlugin = (mod: unknown) =>
+  Effect.gen(function* () {
+    const value = (yield* Schema.decodeUnknownEffect(PluginModule)(mod)).default
+    return "effect" in value ? value : PluginPromise.fromPromise(value)
+  })
+
 export const Plugin = define({
   id: "config-plugin",
   effect: Effect.fn(function* (ctx) {
@@ -36,6 +46,7 @@ export const Plugin = define({
     const fs = yield* FSUtil.Service
     const location = yield* Location.Service
     const npm = yield* Npm.Service
+    const bundles = yield* Bundle.Service
     yield* Effect.gen(function* () {
       const configured: { package: string; options?: Record<string, any> }[] = []
 
@@ -67,6 +78,39 @@ export const Plugin = define({
             .pipe(Effect.orElseSucceed(() => []))
           files.sort()
           for (const file of files) configured.push({ package: file })
+
+          const manifests = yield* fs
+            .glob("plugin-bundles/*.json", {
+              cwd: entry.path,
+              absolute: true,
+              include: "file",
+              dot: true,
+              symlink: true,
+            })
+            .pipe(Effect.orElseSucceed(() => []))
+          manifests.sort()
+          for (const file of manifests) {
+            yield* fs.readJson(file).pipe(
+              Effect.andThen((input) =>
+                Effect.sync(() => ({
+                  manifest: Bundle.decodeManifest(input),
+                  entrypoint: decodeBundleFile(
+                    typeof input === "object" && input !== null && !Array.isArray(input)
+                      ? { entrypoint: (input as Record<string, unknown>).entrypoint }
+                      : input,
+                  ).entrypoint,
+                })),
+              ),
+              Effect.andThen((bundle) =>
+                bundles.discover(bundle.manifest, () =>
+                  Effect.promise(() => import(pathToFileURL(path.resolve(path.dirname(file), bundle.entrypoint)).href)).pipe(
+                    Effect.andThen(decodePlugin),
+                  ),
+                ),
+              ),
+              Effect.ignoreCause,
+            )
+          }
         }
       }
 
@@ -78,8 +122,7 @@ export const Plugin = define({
           if (!entrypoint) return
 
           const mod = yield* Effect.promise(() => import(entrypoint))
-          const value = (yield* Schema.decodeUnknownEffect(PluginModule)(mod)).default
-          const plugin = "effect" in value ? value : PluginPromise.fromPromise(value)
+          const plugin = yield* decodePlugin(mod)
           yield* ctx.plugin.add({
             id: plugin.id,
             effect: (host) => plugin.effect({ ...host, options: ref.options ?? {} }),

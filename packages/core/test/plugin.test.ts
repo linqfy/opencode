@@ -1,9 +1,9 @@
 import { describe, expect } from "bun:test"
 import { DateTime, Effect, Exit, Fiber } from "effect"
-import { define } from "@opencode-ai/plugin/v2/effect"
+import { define, type PluginBundleManifest } from "@opencode-ai/plugin/v2/effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { EventV2 } from "@opencode-ai/core/event"
-import { Hooks, PluginV2 } from "@opencode-ai/core/plugin"
+import { Bundle, Hooks, PluginV2 } from "@opencode-ai/core/plugin"
 import { Project } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
@@ -224,6 +224,151 @@ describe("PluginV2", () => {
 
       yield* plugins.remove(PluginV2.ID.make("managed"))
       expect(yield* agents.get(AgentV2.ID.make("configured"))).toBeUndefined()
+    }),
+  )
+})
+
+describe("PluginBundle", () => {
+  const manifest = (id = "bundle"): PluginBundleManifest => ({
+    id,
+    version: "1.0.0",
+    provenance: { source: "test", location: "/bundle.json" },
+    permissions: [],
+    startup: "lazy",
+    contributions: {},
+  })
+
+  it.effect("does not call a loader during discovery", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      let calls = 0
+
+      yield* bundles.discover(manifest(), () =>
+        Effect.sync(() => {
+          calls++
+          return define({ id: "bundle", effect: () => Effect.void })
+        }),
+      )
+
+      expect(calls).toBe(0)
+      expect((yield* bundles.list())[0]?.status).toBe("discovered")
+    }),
+  )
+
+  it.effect("activates discovered bundles only when requested", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      const plugins = yield* PluginV2.Service
+      let calls = 0
+      yield* bundles.discover(manifest(), () =>
+        Effect.sync(() => {
+          calls++
+          return define({ id: "bundle", effect: () => Effect.void })
+        }),
+      )
+
+      yield* bundles.activate("bundle")
+
+      expect(calls).toBe(1)
+      expect((yield* bundles.list())[0]?.status).toBe("active")
+      yield* plugins.wait(PluginV2.ID.make("bundle"))
+    }),
+  )
+
+  it.effect("unloads active bundle effects and is idempotent", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      const agents = yield* AgentV2.Service
+      yield* bundles.discover(manifest(), () =>
+        Effect.succeed(
+          define({
+            id: "bundle",
+            effect: (ctx) =>
+              ctx.agent.transform((agents) =>
+                agents.update("bundled", (agent) => {
+                  agent.description = "registered by bundle"
+                  agent.mode = "subagent"
+                }),
+              ),
+          }),
+        ),
+      )
+
+      yield* bundles.activate("bundle")
+      expect(yield* agents.get(AgentV2.ID.make("bundled"))).toBeDefined()
+      yield* bundles.unload("bundle")
+      yield* bundles.unload("bundle")
+
+      expect(yield* agents.get(AgentV2.ID.make("bundled"))).toBeUndefined()
+      expect((yield* bundles.list())[0]?.status).toBe("unloaded")
+      yield* bundles.activate("bundle")
+      expect(yield* agents.get(AgentV2.ID.make("bundled"))).toBeDefined()
+    }),
+  )
+
+  it.effect("retries failed activation and records a safe health message", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      let attempts = 0
+      yield* bundles.discover(manifest(), () =>
+        Effect.sync(() => {
+          attempts++
+          if (attempts === 1) throw new Error("secret stack detail")
+          return define({ id: "bundle", effect: () => Effect.void })
+        }),
+      )
+
+      const failed = yield* bundles.activate("bundle").pipe(Effect.exit)
+      expect(Exit.isFailure(failed)).toBe(true)
+      expect((yield* bundles.list())[0]).toMatchObject({ status: "failed", health: { message: "Bundle activation failed" } })
+
+      yield* bundles.activate("bundle")
+      expect(attempts).toBe(2)
+      expect((yield* bundles.list())[0]?.status).toBe("active")
+    }),
+  )
+
+  it.effect("rejects conflicting manifests and makes active activation a no-op", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      let calls = 0
+      const load = () =>
+        Effect.sync(() => {
+          calls++
+          return define({ id: "bundle", effect: () => Effect.void })
+        })
+      yield* bundles.discover(manifest(), load)
+      yield* bundles.discover(manifest(), load)
+      const conflict = yield* bundles.discover({ ...manifest(), version: "2.0.0" }, load).pipe(Effect.exit)
+      yield* bundles.activate("bundle")
+      yield* bundles.activate("bundle")
+
+      expect(Exit.isFailure(conflict)).toBe(true)
+      expect(calls).toBe(1)
+    }),
+  )
+
+  it.effect("fails missing bundle operations with stable errors", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      const activation = yield* bundles.activate("missing").pipe(Effect.exit)
+      const unload = yield* bundles.unload("missing").pipe(Effect.exit)
+
+      expect(Exit.isFailure(activation)).toBe(true)
+      expect(Exit.isFailure(unload)).toBe(true)
+      if (Exit.isFailure(activation)) expect(String(activation.cause)).toContain("Unknown plugin bundle: missing")
+      if (Exit.isFailure(unload)) expect(String(unload.cause)).toContain("Unknown plugin bundle: missing")
+    }),
+  )
+
+  it.effect("rejects malformed manifests", () =>
+    Effect.sync(() => {
+      const valid = manifest()
+      expect(() => Bundle.decodeManifest({ ...valid, permissions: [1] })).toThrow()
+      expect(() => Bundle.decodeManifest({ ...valid, startup: "later" })).toThrow()
+      expect(() => Bundle.decodeManifest({ ...valid, contributions: { tools: "yes" } })).toThrow()
+      expect(() => Bundle.decodeManifest({ ...valid, id: undefined })).toThrow()
+      expect(Bundle.decodeManifest({ ...valid, futureField: "accepted" })).toEqual(valid)
     }),
   )
 })

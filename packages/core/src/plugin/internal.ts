@@ -23,6 +23,7 @@ import { Location } from "../location"
 import { ModelsDev } from "../models-dev"
 import { Npm } from "../npm"
 import { PluginV2 } from "../plugin"
+import { Bundle } from "./bundle"
 import { Reference } from "../reference"
 import { SkillV2 } from "../skill"
 import { State } from "../state"
@@ -65,6 +66,7 @@ const layer = Layer.effectDiscard(
     const catalog = yield* Catalog.Service
     const commands = yield* CommandV2.Service
     const plugin = yield* PluginV2.Service
+    const bundles = yield* Bundle.Service
     const integration = yield* Integration.Service
     const agents = yield* AgentV2.Service
     const config = yield* Config.Service
@@ -87,6 +89,7 @@ const layer = Layer.effectDiscard(
             .pipe(
               Effect.provideService(Catalog.Service, catalog),
               Effect.provideService(CommandV2.Service, commands),
+              Effect.provideService(Bundle.Service, bundles),
               Effect.provideService(Integration.Service, integration),
               Effect.provideService(AgentV2.Service, agents),
               Effect.provideService(Config.Service, config),
@@ -136,6 +139,7 @@ export const node = makeLocationNode({
     Catalog.node,
     CommandV2.node,
     PluginV2.node,
+    Bundle.node,
     Integration.node,
     AgentV2.node,
     Config.node,
