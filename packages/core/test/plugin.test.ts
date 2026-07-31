@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Exit, Fiber } from "effect"
+import { DateTime, Deferred, Effect, Exit, Fiber } from "effect"
 import { define, type PluginBundleManifest } from "@opencode-ai/plugin/v2/effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -328,6 +328,81 @@ describe("PluginBundle", () => {
     }),
   )
 
+  it.effect("waits for a loading bundle activation to complete", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const secondCompleted = yield* Deferred.make<void>()
+      yield* bundles.discover(manifest(), () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(define({ id: "bundle", effect: () => Effect.void })),
+        ),
+      )
+
+      const first = yield* bundles.activate("bundle").pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      const second = yield* bundles
+        .activate("bundle")
+        .pipe(Effect.andThen(Deferred.succeed(secondCompleted, undefined)), Effect.forkChild)
+      yield* Effect.yieldNow
+
+      expect(yield* Deferred.isDone(secondCompleted)).toBe(false)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(first)
+      yield* Fiber.join(second)
+      expect((yield* bundles.list())[0]?.status).toBe("active")
+    }),
+  )
+
+  it.effect("shares a loading bundle activation failure with concurrent callers", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      yield* bundles.discover(manifest(), () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(Effect.fail(new Error("loader failure"))),
+        ),
+      )
+
+      const first = yield* bundles.activate("bundle").pipe(Effect.exit, Effect.forkChild)
+      yield* Deferred.await(started)
+      const second = yield* bundles.activate("bundle").pipe(Effect.exit, Effect.forkChild)
+      yield* Deferred.succeed(release, undefined)
+
+      const firstExit = yield* Fiber.join(first)
+      const secondExit = yield* Fiber.join(second)
+      expect(Exit.isFailure(firstExit)).toBe(true)
+      expect(secondExit).toEqual(firstExit)
+    }),
+  )
+
+  it.effect("rejects unloading a bundle while activation is loading", () =>
+    Effect.gen(function* () {
+      const bundles = yield* Bundle.Service
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      yield* bundles.discover(manifest(), () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(define({ id: "bundle", effect: () => Effect.void })),
+        ),
+      )
+
+      const activation = yield* bundles.activate("bundle").pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      const unload = yield* bundles.unload("bundle").pipe(Effect.exit)
+
+      expect(Exit.isFailure(unload)).toBe(true)
+      if (Exit.isFailure(unload)) expect(String(unload.cause)).toContain("Cannot unload plugin bundle while activation is loading: bundle")
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(activation)
+    }),
+  )
+
   it.effect("rejects conflicting manifests and makes active activation a no-op", () =>
     Effect.gen(function* () {
       const bundles = yield* Bundle.Service
@@ -367,6 +442,9 @@ describe("PluginBundle", () => {
       expect(() => Bundle.decodeManifest({ ...valid, permissions: [1] })).toThrow()
       expect(() => Bundle.decodeManifest({ ...valid, startup: "later" })).toThrow()
       expect(() => Bundle.decodeManifest({ ...valid, contributions: { tools: "yes" } })).toThrow()
+      expect(() => Bundle.decodeManifest({ ...valid, contributions: { permissionDefaults: true } })).toThrow(
+        "Plugin bundle permission defaults are not supported",
+      )
       expect(() => Bundle.decodeManifest({ ...valid, id: undefined })).toThrow()
       expect(Bundle.decodeManifest({ ...valid, futureField: "accepted" })).toEqual(valid)
     }),

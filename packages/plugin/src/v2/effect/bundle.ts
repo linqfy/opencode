@@ -15,7 +15,6 @@ export interface PluginBundleManifest {
     readonly hooks?: boolean
     readonly commands?: boolean
     readonly modelCatalog?: boolean
-    readonly permissionDefaults?: boolean
     readonly appServerExtensions?: boolean
   }
 }

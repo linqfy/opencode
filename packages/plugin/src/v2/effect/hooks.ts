@@ -39,6 +39,10 @@ export interface Hooks {
   readonly onTurnCompleted: (
     callback: (event: TurnCompleted) => Effect.Effect<void> | void,
   ) => Effect.Effect<Registration, never, Scope.Scope>
+  /**
+   * Reserved for an explicit artifact authority. This hook is not emitted by
+   * current tool-output persistence; callers may only receive explicit dispatch.
+   */
   readonly onArtifactStored: (
     callback: (event: ArtifactStored) => Effect.Effect<void> | void,
   ) => Effect.Effect<Registration, never, Scope.Scope>
