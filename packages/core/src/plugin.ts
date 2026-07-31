@@ -1,4 +1,5 @@
 export * as PluginV2 from "./plugin"
+export * as Hooks from "./plugin/hooks"
 
 import { makeLocationNode } from "./effect/app-node"
 import { Context, Deferred, Effect, Exit, Layer, Scope } from "effect"
@@ -12,6 +13,7 @@ import { EventV2 } from "./event"
 import { Integration } from "./integration"
 import { KeyedMutex } from "./effect/keyed-mutex"
 import { PluginHost } from "./plugin/host"
+import { Hooks } from "./plugin/hooks"
 import { Reference } from "./reference"
 import { SkillV2 } from "./skill"
 import { State } from "./state"
@@ -148,6 +150,7 @@ export const locationLayer = layer.pipe(
   Layer.provideMerge(Catalog.locationLayer),
   Layer.provideMerge(CommandV2.locationLayer),
   Layer.provideMerge(Integration.locationLayer),
+  Layer.provideMerge(Hooks.locationLayer),
   Layer.provideMerge(Reference.locationLayer),
 )
 
@@ -156,6 +159,7 @@ export const node = makeLocationNode({
   layer,
   deps: [
     EventV2.node,
+    Hooks.node,
     AgentV2.node,
     AISDK.node,
     Catalog.node,

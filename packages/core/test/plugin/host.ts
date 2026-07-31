@@ -37,6 +37,12 @@ export function host(overrides: Overrides = {}): PluginContext {
         resolve: () => Effect.die("unused integration.connection.resolve"),
       },
     },
+    events: overrides.events ?? {
+      onSessionStarted: () => Effect.die("unused events.onSessionStarted"),
+      onToolProposed: () => Effect.die("unused events.onToolProposed"),
+      onTurnCompleted: () => Effect.die("unused events.onTurnCompleted"),
+      onArtifactStored: () => Effect.die("unused events.onArtifactStored"),
+    },
     plugin: overrides.plugin ?? {
       add: () => Effect.die("unused plugin.add"),
       remove: () => Effect.die("unused plugin.remove"),

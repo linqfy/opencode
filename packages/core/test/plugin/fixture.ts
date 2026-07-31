@@ -12,7 +12,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Integration } from "@opencode-ai/core/integration"
 import { Location } from "@opencode-ai/core/location"
 import { Npm } from "@opencode-ai/core/npm"
-import { PluginV2 } from "@opencode-ai/core/plugin"
+import { Hooks, PluginV2 } from "@opencode-ai/core/plugin"
 import { Reference } from "@opencode-ai/core/reference"
 import { SkillV2 } from "@opencode-ai/core/skill"
 import { Effect, Layer } from "effect"
@@ -35,6 +35,7 @@ export const PluginTestLayer = AppNodeBuilder.build(
     Npm.node,
     Credential.node,
     EventV2.node,
+    Hooks.node,
     LayerNodePlatform.httpClient,
     PluginV2.node,
     AgentV2.node,
