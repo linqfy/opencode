@@ -64,6 +64,10 @@ impl CommitLog {
         self.keys.contains_key(key)
     }
 
+    pub fn record_for_key(&self, key: &str) -> Option<Record> {
+        self.keys.get(key).cloned()
+    }
+
     pub fn commit_boundary(&self) -> io::Result<()> {
         self.journal.commit_boundary()
     }

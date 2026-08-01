@@ -109,6 +109,20 @@ pub struct ProjectionStore {
 impl ProjectionStore {
     pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
+        let legacy_tasks = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")?
+            .exists([])?
+            && !conn
+                .prepare("PRAGMA table_info(tasks)")?
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(1)?, row.get::<_, u8>(5)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|(name, key)| name == "root_id" && *key == 1);
+        if legacy_tasks {
+            conn.execute_batch("DROP TABLE task_dependencies; DROP TABLE worktree_leases; DROP TABLE mailbox_messages; DROP TABLE task_deliverables; DROP TABLE tasks;")?;
+        }
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
@@ -136,11 +150,12 @@ impl ProjectionStore {
                     source_thread_ids TEXT NOT NULL, generated_at INTEGER NOT NULL
               );
               CREATE TABLE IF NOT EXISTS tasks (
-                  task_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, parent_task_id TEXT,
+                   root_id TEXT NOT NULL, task_id TEXT NOT NULL, parent_task_id TEXT,
                   depth INTEGER NOT NULL, state_changing INTEGER NOT NULL, budget INTEGER NOT NULL,
                   reserved_parent INTEGER NOT NULL DEFAULT 0, reserved_child_pool INTEGER NOT NULL DEFAULT 0,
                   reserved_synthesis INTEGER NOT NULL DEFAULT 0, budget_used INTEGER NOT NULL DEFAULT 0,
-                  state TEXT NOT NULL, cancellation_reason TEXT, cancellation_observed INTEGER NOT NULL DEFAULT 0
+                   state TEXT NOT NULL, cancellation_reason TEXT, cancellation_observed INTEGER NOT NULL DEFAULT 0,
+                   PRIMARY KEY(root_id, task_id)
               );
               CREATE INDEX IF NOT EXISTS idx_tasks_root ON tasks(root_id, task_id);
               CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -152,14 +167,16 @@ impl ProjectionStore {
                   PRIMARY KEY(root_id, worktree_id)
               );
               CREATE TABLE IF NOT EXISTS mailbox_messages (
-                  message_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, sender_task_id TEXT NOT NULL,
+                   root_id TEXT NOT NULL, message_id TEXT NOT NULL, sender_task_id TEXT NOT NULL,
                   recipient_task_id TEXT NOT NULL, sequence INTEGER NOT NULL, artifact_ids TEXT NOT NULL,
-                  acknowledged INTEGER NOT NULL DEFAULT 0
+                   acknowledged INTEGER NOT NULL DEFAULT 0,
+                   PRIMARY KEY(root_id, message_id), UNIQUE(root_id, recipient_task_id, sequence)
               );
               CREATE INDEX IF NOT EXISTS idx_mailbox_root_recipient_sequence ON mailbox_messages(root_id, recipient_task_id, sequence, message_id);
               CREATE TABLE IF NOT EXISTS task_deliverables (
-                  task_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL,
-                  artifact_ids TEXT NOT NULL, changed_paths TEXT NOT NULL, test_summary TEXT
+                   root_id TEXT NOT NULL, task_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL,
+                   artifact_ids TEXT NOT NULL, changed_paths TEXT NOT NULL, test_summary TEXT,
+                   PRIMARY KEY(root_id, task_id)
               );",
         )?;
         let has_failure_reason = {
@@ -344,6 +361,7 @@ impl ProjectionStore {
                 root_id,
                 task_id,
                 amount,
+                ..
             } => {
                 self.conn.execute(
                     "UPDATE tasks SET budget_used = budget_used + ?3 WHERE root_id = ?1 AND task_id = ?2",
@@ -387,7 +405,7 @@ impl ProjectionStore {
                 reason,
             } => {
                 self.conn.execute(
-                    "UPDATE tasks SET cancellation_reason = ?3 WHERE root_id = ?1 AND task_id = ?2",
+                    "UPDATE tasks SET state = 'cancelled', cancellation_reason = ?3 WHERE root_id = ?1 AND task_id = ?2",
                     params![root_id, task_id, reason],
                 )?;
             }
