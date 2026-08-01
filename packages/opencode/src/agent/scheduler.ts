@@ -1,4 +1,6 @@
 import { Deferred, Effect, Fiber, Scope } from "effect"
+import { createScheduler } from "@ultracode/agents"
+import type { TaskSchedulerAdapter } from "@/tool/task"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { Worktree } from "@/worktree"
 
@@ -146,6 +148,72 @@ export function createChildSessionAdapter(input: {
   })
 
   return { start, cancel }
+}
+
+/** Binds the durable scheduler to OpenCode's worktree and Session V2 boundaries. */
+export function createTaskSchedulerAdapter(input: {
+  readonly scheduler: ReturnType<typeof createScheduler>
+  readonly worktree: ReturnType<typeof createWorktreeLeaseAdapter>
+  readonly child: ReturnType<typeof createChildSessionAdapter>
+  readonly taskId: () => string
+}): TaskSchedulerAdapter {
+  const active = new Map<string, { rootId: string; lease: WorktreeLease }>()
+  return {
+    schedule: (request) =>
+      Effect.gen(function* () {
+        const taskId = request.requestedTaskId ?? input.taskId()
+        const rootId = request.parent.rootId
+        const budget = request.budget.maxTokens ?? 1_000
+        yield* Effect.promise(() =>
+          input.scheduler.spawn({
+            key: `task:${rootId}:${taskId}:spawn`,
+            task: {
+              rootId,
+              taskId,
+              depth: 0,
+              stateChanging: request.stateChanging,
+              dependencyIds: [],
+              requestedMaxTokens: budget,
+              requestedMaxTimeMs: request.budget.maxTimeMs ?? 0,
+              forkMode: request.forkMode,
+              selectedEvidenceArtifactIds: [],
+              toolIds: request.agent.toolConstraints,
+              expectedDeliverable: { name: "task-result", requiredFields: ["summary"] },
+            },
+            budget: { total: budget, fixedCosts: 0 },
+          }),
+        )
+        yield* Effect.promise(() => input.scheduler.admit(rootId, taskId, `task:${rootId}:${taskId}:admit`))
+        const scope = yield* Scope.make()
+        const lease = yield* input.worktree
+          .acquire({ rootId, taskId, stateChanging: request.stateChanging })
+          .pipe(Effect.provideService(Scope.Scope, scope))
+        yield* input.child.start({ rootId, taskId, location: lease.location, prompt: request.brief })
+        active.set(taskId, { rootId, lease })
+        return {
+          taskId,
+          status: "running",
+          summary: "Task scheduled",
+          evidence: { summary: "Task is running; use the task handle for status.", artifactIds: [], changedPaths: [] },
+        }
+      }),
+    cancel: (request) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          input.scheduler.requestCancellation(
+            request.rootId,
+            request.taskId,
+            request.reason,
+            `task:${request.rootId}:${request.taskId}:cancel`,
+          ),
+        )
+        yield* input.child.cancel({ rootId: request.rootId, taskId: request.taskId })
+        const current = active.get(request.taskId)
+        if (!current?.lease.write) return
+        yield* input.worktree.release({ rootId: current.rootId, taskId: request.taskId })
+        active.delete(request.taskId)
+      }),
+  }
 }
 
 function waitForReady(info: Worktree.Info) {
