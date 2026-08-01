@@ -137,4 +137,31 @@ describe("EventsClient", () => {
       expect.objectContaining({ thread_id: "memory:req-adapter", raw_memory: "extracted" }),
     )
   })
+
+  test("sidecar client exposes root-scoped task queries", async () => {
+    await client.proposeCommit("task-root", {
+      kind: "task-spawned",
+      data: { root_id: "root-client", task_id: "task-client", parent_task_id: null, depth: 0, state_changing: true, dependencies: [], budget: 10 },
+    })
+    await client.proposeCommit("task-child", {
+      kind: "task-spawned",
+      data: { root_id: "root-client", task_id: "task-child", parent_task_id: "task-client", depth: 1, state_changing: true, dependencies: [], budget: 5 },
+    })
+    await client.proposeCommit("task-running", {
+      kind: "task-state-changed", data: { root_id: "root-client", task_id: "task-client", state: "running", reason: null },
+    })
+    await client.proposeCommit("task-completed", {
+      kind: "task-state-changed", data: { root_id: "root-client", task_id: "task-client", state: "completed", reason: null },
+    })
+    await client.proposeCommit("task-message", {
+      kind: "mailbox-message-sent", data: { root_id: "root-client", message_id: "message-client", sender_task_id: "task-client", recipient_task_id: "task-child", sequence: 1, artifact_ids: ["art-client"] },
+    })
+    await client.proposeCommit("task-deliverable", {
+      kind: "task-deliverable-committed", data: { root_id: "root-client", task_id: "task-client", status: "completed", summary: "done", artifact_ids: [], changed_paths: [], test_summary: null },
+    })
+
+    expect(await client.listTasks("root-client")).toHaveLength(2)
+    expect(await client.listMailbox("root-client", "task-child")).toHaveLength(1)
+    expect(await client.listTaskDeliverables("root-client")).toHaveLength(1)
+  })
 })

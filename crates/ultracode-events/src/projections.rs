@@ -54,6 +54,44 @@ pub struct MemoryConsolidation {
     pub generated_at: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskRecord {
+    pub root_id: String,
+    pub task_id: String,
+    pub parent_task_id: Option<String>,
+    pub depth: u8,
+    pub state_changing: bool,
+    pub budget: u64,
+    pub reserved_parent: u64,
+    pub reserved_child_pool: u64,
+    pub reserved_synthesis: u64,
+    pub budget_used: u64,
+    pub state: String,
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MailboxMessage {
+    pub root_id: String,
+    pub message_id: String,
+    pub sender_task_id: String,
+    pub recipient_task_id: String,
+    pub sequence: u64,
+    pub artifact_ids: Vec<String>,
+    pub acknowledged: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskDeliverable {
+    pub root_id: String,
+    pub task_id: String,
+    pub status: String,
+    pub summary: String,
+    pub artifact_ids: Vec<String>,
+    pub changed_paths: Vec<String>,
+    pub test_summary: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct MemoryExtractionSource {
     source_session: String,
@@ -95,8 +133,34 @@ impl ProjectionStore {
                );
                CREATE TABLE IF NOT EXISTS memory_consolidations (
                    memory_id TEXT PRIMARY KEY, summary TEXT NOT NULL, memory TEXT NOT NULL,
-                   source_thread_ids TEXT NOT NULL, generated_at INTEGER NOT NULL
-             );",
+                    source_thread_ids TEXT NOT NULL, generated_at INTEGER NOT NULL
+              );
+              CREATE TABLE IF NOT EXISTS tasks (
+                  task_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, parent_task_id TEXT,
+                  depth INTEGER NOT NULL, state_changing INTEGER NOT NULL, budget INTEGER NOT NULL,
+                  reserved_parent INTEGER NOT NULL DEFAULT 0, reserved_child_pool INTEGER NOT NULL DEFAULT 0,
+                  reserved_synthesis INTEGER NOT NULL DEFAULT 0, budget_used INTEGER NOT NULL DEFAULT 0,
+                  state TEXT NOT NULL, cancellation_reason TEXT, cancellation_observed INTEGER NOT NULL DEFAULT 0
+              );
+              CREATE INDEX IF NOT EXISTS idx_tasks_root ON tasks(root_id, task_id);
+              CREATE TABLE IF NOT EXISTS task_dependencies (
+                  root_id TEXT NOT NULL, task_id TEXT NOT NULL, dependency_task_id TEXT NOT NULL,
+                  PRIMARY KEY(root_id, task_id, dependency_task_id)
+              );
+              CREATE TABLE IF NOT EXISTS worktree_leases (
+                  root_id TEXT NOT NULL, worktree_id TEXT NOT NULL, task_id TEXT NOT NULL,
+                  PRIMARY KEY(root_id, worktree_id)
+              );
+              CREATE TABLE IF NOT EXISTS mailbox_messages (
+                  message_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, sender_task_id TEXT NOT NULL,
+                  recipient_task_id TEXT NOT NULL, sequence INTEGER NOT NULL, artifact_ids TEXT NOT NULL,
+                  acknowledged INTEGER NOT NULL DEFAULT 0
+              );
+              CREATE INDEX IF NOT EXISTS idx_mailbox_root_recipient_sequence ON mailbox_messages(root_id, recipient_task_id, sequence, message_id);
+              CREATE TABLE IF NOT EXISTS task_deliverables (
+                  task_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL,
+                  artifact_ids TEXT NOT NULL, changed_paths TEXT NOT NULL, test_summary TEXT
+              );",
         )?;
         let has_failure_reason = {
             let mut statement = conn.prepare("PRAGMA table_info(memory_jobs)")?;
@@ -107,6 +171,26 @@ impl ProjectionStore {
         };
         if !has_failure_reason {
             conn.execute("ALTER TABLE memory_jobs ADD COLUMN failure_reason TEXT", [])?;
+        }
+        let task_columns = {
+            let mut statement = conn.prepare("PRAGMA table_info(tasks)")?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            columns
+        };
+        for column in [
+            "reserved_parent",
+            "reserved_child_pool",
+            "reserved_synthesis",
+            "budget_used",
+        ] {
+            if !task_columns.iter().any(|existing| existing == column) {
+                conn.execute(
+                    &format!("ALTER TABLE tasks ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"),
+                    [],
+                )?;
+            }
         }
         Ok(Self {
             conn,
@@ -213,6 +297,114 @@ impl ProjectionStore {
                     )?;
                 }
             }
+            EventKind::TaskSpawned {
+                root_id,
+                task_id,
+                parent_task_id,
+                depth,
+                state_changing,
+                dependencies,
+                budget,
+            } => {
+                self.conn.execute(
+                    "INSERT INTO tasks (task_id, root_id, parent_task_id, depth, state_changing, budget, state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
+                    params![task_id, root_id, parent_task_id, depth, state_changing, budget],
+                )?;
+                for dependency in dependencies {
+                    self.conn.execute(
+                        "INSERT INTO task_dependencies (root_id, task_id, dependency_task_id) VALUES (?1, ?2, ?3)",
+                        params![root_id, task_id, dependency],
+                    )?;
+                }
+            }
+            EventKind::TaskStateChanged {
+                root_id,
+                task_id,
+                state,
+                reason,
+            } => {
+                self.conn.execute(
+                    "UPDATE tasks SET state = ?3, cancellation_reason = COALESCE(?4, cancellation_reason) WHERE root_id = ?1 AND task_id = ?2",
+                    params![root_id, task_id, state, reason],
+                )?;
+            }
+            EventKind::TaskBudgetReserved {
+                root_id,
+                task_id,
+                parent,
+                child_pool,
+                synthesis,
+            } => {
+                self.conn.execute(
+                    "UPDATE tasks SET reserved_parent = ?3, reserved_child_pool = ?4, reserved_synthesis = ?5 WHERE root_id = ?1 AND task_id = ?2",
+                    params![root_id, task_id, parent, child_pool, synthesis],
+                )?;
+            }
+            EventKind::TaskBudgetUsed {
+                root_id,
+                task_id,
+                amount,
+            } => {
+                self.conn.execute(
+                    "UPDATE tasks SET budget_used = budget_used + ?3 WHERE root_id = ?1 AND task_id = ?2",
+                    params![root_id, task_id, amount],
+                )?;
+            }
+            EventKind::WorktreeLeased {
+                root_id,
+                task_id,
+                worktree_id,
+            } => {
+                self.conn.execute("INSERT INTO worktree_leases (root_id, worktree_id, task_id) VALUES (?1, ?2, ?3)", params![root_id, worktree_id, task_id])?;
+            }
+            EventKind::WorktreeReleased {
+                root_id,
+                task_id,
+                worktree_id,
+            } => {
+                self.conn.execute("DELETE FROM worktree_leases WHERE root_id = ?1 AND worktree_id = ?2 AND task_id = ?3", params![root_id, worktree_id, task_id])?;
+            }
+            EventKind::MailboxMessageSent {
+                root_id,
+                message_id,
+                sender_task_id,
+                recipient_task_id,
+                sequence,
+                artifact_ids,
+            } => {
+                self.conn.execute("INSERT INTO mailbox_messages (message_id, root_id, sender_task_id, recipient_task_id, sequence, artifact_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![message_id, root_id, sender_task_id, recipient_task_id, sequence, serde_json::to_string(artifact_ids).map_err(|_| rusqlite::Error::InvalidParameterName("mailbox artifacts".into()))?])?;
+            }
+            EventKind::MailboxMessageAcknowledged {
+                root_id,
+                message_id,
+                recipient_task_id,
+            } => {
+                self.conn.execute("UPDATE mailbox_messages SET acknowledged = 1 WHERE root_id = ?1 AND message_id = ?2 AND recipient_task_id = ?3", params![root_id, message_id, recipient_task_id])?;
+            }
+            EventKind::TaskCancellationRequested {
+                root_id,
+                task_id,
+                reason,
+            } => {
+                self.conn.execute(
+                    "UPDATE tasks SET cancellation_reason = ?3 WHERE root_id = ?1 AND task_id = ?2",
+                    params![root_id, task_id, reason],
+                )?;
+            }
+            EventKind::TaskCancellationObserved { root_id, task_id } => {
+                self.conn.execute("UPDATE tasks SET cancellation_observed = 1 WHERE root_id = ?1 AND task_id = ?2", params![root_id, task_id])?;
+            }
+            EventKind::TaskDeliverableCommitted {
+                root_id,
+                task_id,
+                status,
+                summary,
+                artifact_ids,
+                changed_paths,
+                test_summary,
+            } => {
+                self.conn.execute("INSERT INTO task_deliverables (task_id, root_id, status, summary, artifact_ids, changed_paths, test_summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![task_id, root_id, status, summary, serde_json::to_string(artifact_ids).map_err(|_| rusqlite::Error::InvalidParameterName("deliverable artifacts".into()))?, serde_json::to_string(changed_paths).map_err(|_| rusqlite::Error::InvalidParameterName("deliverable paths".into()))?, test_summary])?;
+            }
             _ => {}
         }
         Ok(())
@@ -259,7 +451,7 @@ impl ProjectionStore {
     pub fn rebuild(&mut self, journal_dir: &Path, session: &str) -> io::Result<usize> {
         self.conn
             .execute_batch(
-                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs; DELETE FROM memory_consolidations;",
+                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs; DELETE FROM memory_consolidations; DELETE FROM task_dependencies; DELETE FROM worktree_leases; DELETE FROM mailbox_messages; DELETE FROM task_deliverables; DELETE FROM tasks;",
             )
             .map_err(io::Error::other)?;
         let opened = recovery::open(journal_dir, session).map_err(io::Error::other)?;
@@ -390,6 +582,180 @@ impl ProjectionStore {
                 kind: row.get(2)?,
                 session: row.get(3)?,
                 ts: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn task_exists(&self, root_id: &str, task_id: &str) -> Result<bool, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE root_id = ?1 AND task_id = ?2)",
+            params![root_id, task_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn task_root(&self, task_id: &str) -> Result<Option<String>, rusqlite::Error> {
+        self.conn
+            .query_row(
+                "SELECT root_id FROM tasks WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn task_state(
+        &self,
+        root_id: &str,
+        task_id: &str,
+    ) -> Result<Option<String>, rusqlite::Error> {
+        self.conn
+            .query_row(
+                "SELECT state FROM tasks WHERE root_id = ?1 AND task_id = ?2",
+                params![root_id, task_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn child_count(&self, root_id: &str, task_id: &str) -> Result<u64, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE root_id = ?1 AND parent_task_id = ?2",
+            params![root_id, task_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn worktree_owner(
+        &self,
+        root_id: &str,
+        worktree_id: &str,
+    ) -> Result<Option<String>, rusqlite::Error> {
+        self.conn
+            .query_row(
+                "SELECT task_id FROM worktree_leases WHERE root_id = ?1 AND worktree_id = ?2",
+                params![root_id, worktree_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn mailbox_recipient(
+        &self,
+        root_id: &str,
+        message_id: &str,
+    ) -> Result<Option<String>, rusqlite::Error> {
+        self.conn.query_row("SELECT recipient_task_id FROM mailbox_messages WHERE root_id = ?1 AND message_id = ?2", params![root_id, message_id], |row| row.get(0)).optional()
+    }
+
+    pub fn mailbox_exists(&self, message_id: &str) -> Result<bool, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mailbox_messages WHERE message_id = ?1)",
+            params![message_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn list_tasks(
+        &self,
+        root_id: &str,
+        limit: u64,
+    ) -> Result<Vec<TaskRecord>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT root_id, task_id, parent_task_id, depth, state_changing, budget, reserved_parent, reserved_child_pool, reserved_synthesis, budget_used, state FROM tasks WHERE root_id = ?1 ORDER BY task_id ASC LIMIT ?2")?;
+        let rows = stmt.query_map(params![root_id, limit.min(200)], |row| {
+            Ok(TaskRecord {
+                root_id: row.get(0)?,
+                task_id: row.get(1)?,
+                parent_task_id: row.get(2)?,
+                depth: row.get(3)?,
+                state_changing: row.get(4)?,
+                budget: row.get(5)?,
+                reserved_parent: row.get(6)?,
+                reserved_child_pool: row.get(7)?,
+                reserved_synthesis: row.get(8)?,
+                budget_used: row.get(9)?,
+                state: row.get(10)?,
+                dependencies: Vec::new(),
+            })
+        })?;
+        let mut tasks = rows.collect::<Result<Vec<_>, _>>()?;
+        for task in &mut tasks {
+            let mut dependencies = self.conn.prepare("SELECT dependency_task_id FROM task_dependencies WHERE root_id = ?1 AND task_id = ?2 ORDER BY dependency_task_id ASC")?;
+            task.dependencies = dependencies
+                .query_map(params![root_id, task.task_id], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+        }
+        Ok(tasks)
+    }
+
+    pub fn list_mailbox(
+        &self,
+        root_id: &str,
+        recipient_task_id: Option<&str>,
+        after_sequence: u64,
+        limit: u64,
+    ) -> Result<Vec<MailboxMessage>, rusqlite::Error> {
+        let sql = if recipient_task_id.is_some() {
+            "SELECT root_id, message_id, sender_task_id, recipient_task_id, sequence, artifact_ids, acknowledged FROM mailbox_messages WHERE root_id = ?1 AND recipient_task_id = ?2 AND sequence > ?3 ORDER BY sequence ASC, message_id ASC LIMIT ?4"
+        } else {
+            "SELECT root_id, message_id, sender_task_id, recipient_task_id, sequence, artifact_ids, acknowledged FROM mailbox_messages WHERE root_id = ?1 AND sequence > ?2 ORDER BY sequence ASC, message_id ASC LIMIT ?3"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let map = |row: &rusqlite::Row<'_>| {
+            Ok(MailboxMessage {
+                root_id: row.get(0)?,
+                message_id: row.get(1)?,
+                sender_task_id: row.get(2)?,
+                recipient_task_id: row.get(3)?,
+                sequence: row.get(4)?,
+                artifact_ids: serde_json::from_str(&row.get::<_, String>(5)?).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        5,
+                        "artifact_ids".into(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?,
+                acknowledged: row.get(6)?,
+            })
+        };
+        let rows = match recipient_task_id {
+            Some(recipient) => stmt.query_map(
+                params![root_id, recipient, after_sequence, limit.min(200)],
+                map,
+            )?,
+            None => stmt.query_map(params![root_id, after_sequence, limit.min(200)], map)?,
+        };
+        rows.collect()
+    }
+
+    pub fn list_task_deliverables(
+        &self,
+        root_id: &str,
+        limit: u64,
+    ) -> Result<Vec<TaskDeliverable>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare("SELECT root_id, task_id, status, summary, artifact_ids, changed_paths, test_summary FROM task_deliverables WHERE root_id = ?1 ORDER BY task_id ASC LIMIT ?2")?;
+        let rows = stmt.query_map(params![root_id, limit.min(200)], |row| {
+            Ok(TaskDeliverable {
+                root_id: row.get(0)?,
+                task_id: row.get(1)?,
+                status: row.get(2)?,
+                summary: row.get(3)?,
+                artifact_ids: serde_json::from_str(&row.get::<_, String>(4)?).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        4,
+                        "artifact_ids".into(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?,
+                changed_paths: serde_json::from_str(&row.get::<_, String>(5)?).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        5,
+                        "changed_paths".into(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?,
+                test_summary: row.get(6)?,
             })
         })?;
         rows.collect()

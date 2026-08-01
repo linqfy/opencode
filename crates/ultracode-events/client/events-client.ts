@@ -41,6 +41,38 @@ export type MemoryConsolidation = {
   source_thread_ids: string[]
   generated_at: number
 }
+export type TaskRecord = {
+  root_id: string
+  task_id: string
+  parent_task_id: string | null
+  depth: number
+  state_changing: boolean
+  budget: number
+  reserved_parent: number
+  reserved_child_pool: number
+  reserved_synthesis: number
+  budget_used: number
+  state: string
+  dependencies: string[]
+}
+export type MailboxMessage = {
+  root_id: string
+  message_id: string
+  sender_task_id: string
+  recipient_task_id: string
+  sequence: number
+  artifact_ids: string[]
+  acknowledged: boolean
+}
+export type TaskDeliverable = {
+  root_id: string
+  task_id: string
+  status: string
+  summary: string
+  artifact_ids: string[]
+  changed_paths: string[]
+  test_summary: string | null
+}
 
 function hexEncode(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -128,6 +160,23 @@ export class EventsClient {
 
   async rebuildProjections(session: string): Promise<{ count: number }> {
     return this.call<{ count: number }>("rebuild_projections", { session })
+  }
+
+  async listTasks(rootId: string, limit = 100): Promise<TaskRecord[]> {
+    return this.call<TaskRecord[]>("list_tasks", { root_id: rootId, limit })
+  }
+
+  async listMailbox(rootId: string, recipientTaskId?: string, afterSequence = 0, limit = 100): Promise<MailboxMessage[]> {
+    return this.call<MailboxMessage[]>("list_mailbox", {
+      root_id: rootId,
+      ...(recipientTaskId === undefined ? {} : { recipient_task_id: recipientTaskId }),
+      after_sequence: afterSequence,
+      limit,
+    })
+  }
+
+  async listTaskDeliverables(rootId: string, limit = 100): Promise<TaskDeliverable[]> {
+    return this.call<TaskDeliverable[]>("list_task_deliverables", { root_id: rootId, limit })
   }
 
   async listMemoryRecords(limit = 200): Promise<MemoryRecord[]> {

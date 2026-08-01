@@ -139,16 +139,19 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                     .map_err(|e| format!("bad kind: {e}"))?;
             if !state.commit.contains_key(key) {
                 state.projections.validate_memory_result(&kind)?;
+                validate_task_event(&state.projections, &kind)?;
             }
             let outcome = state.commit.propose(key, kind).map_err(|e| e.to_string())?;
             let (record, duplicate) = match outcome {
                 CommitOutcome::Committed(r) => (r, false),
                 CommitOutcome::Duplicate(r) => (r, true),
             };
-            state
-                .projections
-                .index_record(&record)
-                .map_err(|e| e.to_string())?;
+            if !duplicate {
+                state
+                    .projections
+                    .index_record(&record)
+                    .map_err(|e| e.to_string())?;
+            }
             Ok(json!({ "seq": record.event.seq, "hash": record.hash, "duplicate": duplicate }))
         }
 
@@ -190,6 +193,75 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .rebuild(&state.journal_dir.clone(), session)
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "count": count }))
+        }
+
+        "list_tasks" => {
+            let root_id = req
+                .params
+                .get("root_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing root_id")?;
+            let limit = req
+                .params
+                .get("limit")
+                .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
+                .min(200);
+            serde_json::to_value(
+                state
+                    .projections
+                    .list_tasks(root_id, limit)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
+        }
+
+        "list_mailbox" => {
+            let root_id = req
+                .params
+                .get("root_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing root_id")?;
+            let recipient_task_id = req
+                .params
+                .get("recipient_task_id")
+                .map(|value| value.as_str().ok_or("bad recipient_task_id"))
+                .transpose()?;
+            let after_sequence = req
+                .params
+                .get("after_sequence")
+                .map_or(Ok(0), |value| value.as_u64().ok_or("bad after_sequence"))?;
+            let limit = req
+                .params
+                .get("limit")
+                .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
+                .min(200);
+            serde_json::to_value(
+                state
+                    .projections
+                    .list_mailbox(root_id, recipient_task_id, after_sequence, limit)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
+        }
+
+        "list_task_deliverables" => {
+            let root_id = req
+                .params
+                .get("root_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing root_id")?;
+            let limit = req
+                .params
+                .get("limit")
+                .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
+                .min(200);
+            serde_json::to_value(
+                state
+                    .projections
+                    .list_task_deliverables(root_id, limit)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
         }
 
         "list_memory_records" => {
@@ -353,6 +425,179 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
 
         other => Err(format!("unknown method: {other}")),
     }
+}
+
+fn validate_task_event(projections: &ProjectionStore, kind: &EventKind) -> Result<(), String> {
+    match kind {
+        EventKind::TaskSpawned {
+            root_id,
+            task_id,
+            parent_task_id,
+            depth,
+            dependencies,
+            ..
+        } => {
+            if let Some(existing_root) =
+                projections.task_root(task_id).map_err(|e| e.to_string())?
+            {
+                if existing_root != *root_id {
+                    return Err(format!("task exists in different root: {task_id}"));
+                }
+                return Err(format!("duplicate task: {task_id}"));
+            }
+            if *depth > 2 {
+                return Err("task depth exceeds 2".into());
+            }
+            if let Some(parent) = parent_task_id {
+                if !projections
+                    .task_exists(root_id, parent)
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err(format!("parent task does not exist in root: {parent}"));
+                }
+                if projections
+                    .child_count(root_id, parent)
+                    .map_err(|e| e.to_string())?
+                    >= 3
+                {
+                    return Err(format!("parent already has three children: {parent}"));
+                }
+            }
+            for dependency in dependencies {
+                if !projections
+                    .task_exists(root_id, dependency)
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err(format!(
+                        "dependency task does not exist in root: {dependency}"
+                    ));
+                }
+            }
+        }
+        EventKind::TaskStateChanged {
+            root_id,
+            task_id,
+            state,
+            ..
+        } => {
+            let current = require_task(projections, root_id, task_id)?;
+            let valid = matches!(
+                (current.as_str(), state.as_str()),
+                ("pending", "running" | "waiting" | "cancelled")
+                    | ("waiting", "pending" | "cancelled")
+                    | ("running", "completed" | "failed" | "cancelled")
+            );
+            if !valid {
+                return Err(format!(
+                    "invalid task-state transition: {current} -> {state}"
+                ));
+            }
+        }
+        EventKind::TaskBudgetReserved {
+            root_id, task_id, ..
+        }
+        | EventKind::TaskBudgetUsed {
+            root_id, task_id, ..
+        }
+        | EventKind::TaskCancellationRequested {
+            root_id, task_id, ..
+        }
+        | EventKind::TaskCancellationObserved { root_id, task_id } => {
+            require_task(projections, root_id, task_id)?;
+        }
+        EventKind::WorktreeLeased {
+            root_id,
+            task_id,
+            worktree_id,
+        } => {
+            require_task(projections, root_id, task_id)?;
+            if projections
+                .worktree_owner(root_id, worktree_id)
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                return Err(format!("worktree lease collision: {worktree_id}"));
+            }
+        }
+        EventKind::WorktreeReleased {
+            root_id,
+            task_id,
+            worktree_id,
+        } => {
+            require_task(projections, root_id, task_id)?;
+            let owner = projections
+                .worktree_owner(root_id, worktree_id)
+                .map_err(|e| e.to_string())?;
+            if owner.as_deref() != Some(task_id) {
+                return Err(format!("worktree release mismatch: {worktree_id}"));
+            }
+        }
+        EventKind::MailboxMessageSent {
+            root_id,
+            message_id,
+            sender_task_id,
+            recipient_task_id,
+            ..
+        } => {
+            require_task(projections, root_id, sender_task_id)?;
+            require_task(projections, root_id, recipient_task_id)?;
+            if projections
+                .mailbox_exists(message_id)
+                .map_err(|e| e.to_string())?
+            {
+                return Err(format!("duplicate mailbox message: {message_id}"));
+            }
+        }
+        EventKind::MailboxMessageAcknowledged {
+            root_id,
+            message_id,
+            recipient_task_id,
+        } => {
+            require_task(projections, root_id, recipient_task_id)?;
+            let recipient = projections
+                .mailbox_recipient(root_id, message_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("unknown mailbox message: {message_id}"))?;
+            if recipient != *recipient_task_id {
+                return Err(format!(
+                    "mailbox acknowledgement recipient mismatch: {message_id}"
+                ));
+            }
+        }
+        EventKind::TaskDeliverableCommitted {
+            root_id, task_id, ..
+        } => {
+            let state = require_task(projections, root_id, task_id)?;
+            if !matches!(state.as_str(), "completed" | "failed" | "cancelled") {
+                return Err(format!(
+                    "task deliverable requires terminal task: {task_id}"
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn require_task(
+    projections: &ProjectionStore,
+    root_id: &str,
+    task_id: &str,
+) -> Result<String, String> {
+    if let Some(state) = projections
+        .task_state(root_id, task_id)
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(state);
+    }
+    if projections
+        .task_root(task_id)
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err(format!("task belongs to wrong root: {task_id}"));
+    }
+    Err(format!("unknown task: {task_id}"))
 }
 
 #[cfg(test)]
@@ -651,6 +896,284 @@ mod tests {
                 )
                 .unwrap(),
             ("failed".to_string(), "invalid memory job".to_string())
+        );
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn task_events_are_validated_before_they_are_appended() {
+        let (journal, db, blobs) = dirs("task-validation");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let spawn = |task_id: &str, parent_task_id: Option<&str>, depth: u8| {
+            json!({ "kind": "task-spawned", "data": {
+                "root_id": "root-a", "task_id": task_id, "parent_task_id": parent_task_id,
+                "depth": depth, "state_changing": true, "dependencies": [], "budget": 10
+            }})
+        };
+
+        assert!(handle_request(
+            &mut state,
+            &req(
+                1,
+                "propose_commit",
+                json!({ "key": "root", "kind": spawn("root", None, 0) })
+            ),
+        )
+        .error
+        .is_none());
+        assert_eq!(state.projections.count().unwrap(), 1);
+
+        for (key, kind, expected) in [
+            (
+                "wrong-root",
+                json!({ "kind": "task-spawned", "data": { "root_id": "root-b", "task_id": "root", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 }}),
+                "different root",
+            ),
+            (
+                "missing-parent",
+                spawn("missing-parent", Some("missing"), 1),
+                "parent",
+            ),
+            ("too-deep", spawn("too-deep", Some("root"), 3), "depth"),
+            (
+                "missing-dependency",
+                json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": "missing-dependency", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": ["missing"], "budget": 10 }}),
+                "dependency",
+            ),
+            (
+                "unknown-state",
+                json!({ "kind": "task-state-changed", "data": { "root_id": "root-a", "task_id": "missing", "state": "running", "reason": null }}),
+                "unknown task",
+            ),
+        ] {
+            let response = handle_request(
+                &mut state,
+                &req(2, "propose_commit", json!({ "key": key, "kind": kind })),
+            );
+            assert!(response.error.unwrap().contains(expected), "key: {key}");
+            assert_eq!(state.projections.count().unwrap(), 1);
+        }
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn task_mailbox_worktree_and_deliverable_projections_are_durable() {
+        let (journal, db, blobs) = dirs("task-projections");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let commit = |state: &mut SidecarState, key: &str, kind: Value| {
+            handle_request(
+                state,
+                &req(1, "propose_commit", json!({ "key": key, "kind": kind })),
+            )
+        };
+        let spawn = |task_id: &str, parent_task_id: Option<&str>| json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": task_id, "parent_task_id": parent_task_id, "depth": if parent_task_id.is_some() { 1 } else { 0 }, "state_changing": true, "dependencies": [], "budget": 10 }});
+
+        assert!(commit(&mut state, "root", spawn("root", None))
+            .error
+            .is_none());
+        assert!(
+            commit(&mut state, "child-a", spawn("child-a", Some("root")))
+                .error
+                .is_none()
+        );
+        assert!(
+            commit(&mut state, "child-b", spawn("child-b", Some("root")))
+                .error
+                .is_none()
+        );
+        assert!(
+            commit(&mut state, "child-c", spawn("child-c", Some("root")))
+                .error
+                .is_none()
+        );
+        let count = state.projections.count().unwrap();
+        assert!(
+            commit(&mut state, "child-d", spawn("child-d", Some("root")))
+                .error
+                .unwrap()
+                .contains("three children")
+        );
+        assert_eq!(state.projections.count().unwrap(), count);
+        assert!(commit(&mut state, "invalid-pending", json!({ "kind": "task-state-changed", "data": { "root_id": "root-a", "task_id": "child-a", "state": "completed", "reason": null }})).error.unwrap().contains("invalid task-state transition"));
+        assert!(commit(&mut state, "wrong-root-cancel", json!({ "kind": "task-cancellation-requested", "data": { "root_id": "root-b", "task_id": "child-a", "reason": "stop" }})).error.unwrap().contains("wrong root"));
+        assert!(commit(&mut state, "reserve", json!({ "kind": "task-budget-reserved", "data": { "root_id": "root-a", "task_id": "child-a", "parent": 6, "child_pool": 3, "synthesis": 1 }})).error.is_none());
+        assert!(commit(&mut state, "used", json!({ "kind": "task-budget-used", "data": { "root_id": "root-a", "task_id": "child-a", "amount": 1 }})).error.is_none());
+        assert!(commit(&mut state, "cancel-request", json!({ "kind": "task-cancellation-requested", "data": { "root_id": "root-a", "task_id": "child-a", "reason": "stop" }})).error.is_none());
+        assert!(commit(&mut state, "cancel-observed", json!({ "kind": "task-cancellation-observed", "data": { "root_id": "root-a", "task_id": "child-a" }})).error.is_none());
+
+        assert!(commit(&mut state, "running", json!({ "kind": "task-state-changed", "data": { "root_id": "root-a", "task_id": "root", "state": "running", "reason": null }})).error.is_none());
+        assert!(commit(&mut state, "completed", json!({ "kind": "task-state-changed", "data": { "root_id": "root-a", "task_id": "root", "state": "completed", "reason": null }})).error.is_none());
+        let count = state.projections.count().unwrap();
+        assert!(commit(&mut state, "terminal-transition", json!({ "kind": "task-state-changed", "data": { "root_id": "root-a", "task_id": "root", "state": "running", "reason": null }})).error.unwrap().contains("invalid task-state transition"));
+        assert_eq!(state.projections.count().unwrap(), count);
+        assert_eq!(commit(&mut state, "running", json!({ "kind": "task-state-changed", "data": { "root_id": "root-a", "task_id": "root", "state": "running", "reason": null }})).result.unwrap()["duplicate"], true);
+
+        assert!(commit(&mut state, "lease", json!({ "kind": "worktree-leased", "data": { "root_id": "root-a", "task_id": "child-a", "worktree_id": "wt-a" }})).error.is_none());
+        assert!(commit(&mut state, "collision", json!({ "kind": "worktree-leased", "data": { "root_id": "root-a", "task_id": "child-b", "worktree_id": "wt-a" }})).error.unwrap().contains("collision"));
+        assert!(commit(&mut state, "bad-release", json!({ "kind": "worktree-released", "data": { "root_id": "root-a", "task_id": "child-b", "worktree_id": "wt-a" }})).error.unwrap().contains("mismatch"));
+        assert!(commit(&mut state, "release", json!({ "kind": "worktree-released", "data": { "root_id": "root-a", "task_id": "child-a", "worktree_id": "wt-a" }})).error.is_none());
+
+        for sequence in [2, 1] {
+            assert!(commit(&mut state, &format!("message-{sequence}"), json!({ "kind": "mailbox-message-sent", "data": { "root_id": "root-a", "message_id": format!("message-{sequence}"), "sender_task_id": "root", "recipient_task_id": "child-a", "sequence": sequence, "artifact_ids": ["art"] }})).error.is_none());
+        }
+        assert_eq!(
+            state
+                .projections
+                .list_mailbox("root-a", Some("child-a"), 0, 100)
+                .unwrap()
+                .iter()
+                .map(|message| message.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(commit(&mut state, "duplicate-message", json!({ "kind": "mailbox-message-sent", "data": { "root_id": "root-a", "message_id": "message-1", "sender_task_id": "root", "recipient_task_id": "child-a", "sequence": 3, "artifact_ids": [] }})).error.unwrap().contains("duplicate mailbox"));
+        assert!(commit(&mut state, "bad-ack", json!({ "kind": "mailbox-message-acknowledged", "data": { "root_id": "root-a", "message_id": "message-1", "recipient_task_id": "child-b" }})).error.unwrap().contains("mismatch"));
+        assert!(commit(&mut state, "ack", json!({ "kind": "mailbox-message-acknowledged", "data": { "root_id": "root-a", "message_id": "message-1", "recipient_task_id": "child-a" }})).error.is_none());
+
+        assert!(commit(&mut state, "nonterminal-deliverable", json!({ "kind": "task-deliverable-committed", "data": { "root_id": "root-a", "task_id": "child-a", "status": "completed", "summary": "no", "artifact_ids": [], "changed_paths": [], "test_summary": null }})).error.unwrap().contains("terminal"));
+        assert!(commit(&mut state, "deliverable", json!({ "kind": "task-deliverable-committed", "data": { "root_id": "root-a", "task_id": "root", "status": "completed", "summary": "yes", "artifact_ids": ["art"], "changed_paths": ["src/a"], "test_summary": "ok" }})).error.is_none());
+        let live_tasks = state.projections.list_tasks("root-a", 500).unwrap();
+        let child_a = live_tasks
+            .iter()
+            .find(|task| task.task_id == "child-a")
+            .unwrap();
+        assert_eq!(
+            (
+                child_a.reserved_parent,
+                child_a.reserved_child_pool,
+                child_a.reserved_synthesis,
+                child_a.budget_used,
+            ),
+            (6, 3, 1, 1)
+        );
+        let live_mailbox = state
+            .projections
+            .list_mailbox("root-a", None, 0, 500)
+            .unwrap();
+        let live_deliverables = state
+            .projections
+            .list_task_deliverables("root-a", 500)
+            .unwrap();
+        state.projections.rebuild(&journal, "ses_1").unwrap();
+        assert_eq!(
+            state.projections.list_tasks("root-a", 500).unwrap(),
+            live_tasks
+        );
+        assert_eq!(
+            state
+                .projections
+                .list_mailbox("root-a", None, 0, 500)
+                .unwrap(),
+            live_mailbox
+        );
+        assert_eq!(
+            state
+                .projections
+                .list_task_deliverables("root-a", 500)
+                .unwrap(),
+            live_deliverables
+        );
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn task_queries_default_and_clamp_to_two_hundred_items() {
+        let (journal, db, blobs) = dirs("task-query-bounds");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        for index in 0..201 {
+            let task_id = format!("task-{index:03}");
+            let spawned = handle_request(
+                &mut state,
+                &req(
+                    index * 3 + 1,
+                    "propose_commit",
+                    json!({ "key": format!("spawn-{index}"), "kind": { "kind": "task-spawned", "data": { "root_id": "root-bounds", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": false, "dependencies": [], "budget": 1 } } }),
+                ),
+            );
+            assert!(spawned.error.is_none());
+            let running = handle_request(
+                &mut state,
+                &req(
+                    index * 3 + 2,
+                    "propose_commit",
+                    json!({ "key": format!("running-{index}"), "kind": { "kind": "task-state-changed", "data": { "root_id": "root-bounds", "task_id": task_id, "state": "running", "reason": null } } }),
+                ),
+            );
+            assert!(running.error.is_none());
+            let completed = handle_request(
+                &mut state,
+                &req(
+                    index * 3 + 3,
+                    "propose_commit",
+                    json!({ "key": format!("completed-{index}"), "kind": { "kind": "task-state-changed", "data": { "root_id": "root-bounds", "task_id": task_id, "state": "completed", "reason": null } } }),
+                ),
+            );
+            assert!(completed.error.is_none());
+            let deliverable = handle_request(
+                &mut state,
+                &req(
+                    1_000 + index,
+                    "propose_commit",
+                    json!({ "key": format!("deliverable-{index}"), "kind": { "kind": "task-deliverable-committed", "data": { "root_id": "root-bounds", "task_id": task_id, "status": "completed", "summary": "done", "artifact_ids": [], "changed_paths": [], "test_summary": null } } }),
+                ),
+            );
+            assert!(deliverable.error.is_none());
+        }
+        for sequence in 1..=201 {
+            let message = handle_request(
+                &mut state,
+                &req(
+                    2_000 + sequence,
+                    "propose_commit",
+                    json!({ "key": format!("message-{sequence}"), "kind": { "kind": "mailbox-message-sent", "data": { "root_id": "root-bounds", "message_id": format!("message-{sequence}"), "sender_task_id": "task-000", "recipient_task_id": "task-001", "sequence": sequence, "artifact_ids": [] } } }),
+                ),
+            );
+            assert!(message.error.is_none());
+        }
+        let tasks = handle_request(
+            &mut state,
+            &req(
+                3_000,
+                "list_tasks",
+                json!({ "root_id": "root-bounds", "limit": 500 }),
+            ),
+        )
+        .result
+        .unwrap();
+        let mailbox = handle_request(
+            &mut state,
+            &req(
+                3_001,
+                "list_mailbox",
+                json!({ "root_id": "root-bounds", "limit": 500 }),
+            ),
+        )
+        .result
+        .unwrap();
+        let deliverables = handle_request(
+            &mut state,
+            &req(
+                3_002,
+                "list_task_deliverables",
+                json!({ "root_id": "root-bounds", "limit": 500 }),
+            ),
+        )
+        .result
+        .unwrap();
+        assert_eq!(tasks.as_array().unwrap().len(), 200);
+        assert_eq!(mailbox.as_array().unwrap().len(), 200);
+        assert_eq!(deliverables.as_array().unwrap().len(), 200);
+        assert_eq!(
+            handle_request(
+                &mut state,
+                &req(3_003, "list_tasks", json!({ "root_id": "root-bounds" }))
+            )
+            .result
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+            100
         );
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
