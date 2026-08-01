@@ -77,7 +77,11 @@ pub struct MailboxMessage {
     pub sender_task_id: String,
     pub recipient_task_id: String,
     pub sequence: u64,
+    pub summary: String,
     pub artifact_ids: Vec<String>,
+    pub changed_paths: Vec<String>,
+    pub test_summary: Option<String>,
+    pub blocked_reason: Option<String>,
     pub acknowledged: bool,
 }
 
@@ -166,10 +170,11 @@ impl ProjectionStore {
                   root_id TEXT NOT NULL, worktree_id TEXT NOT NULL, task_id TEXT NOT NULL,
                   PRIMARY KEY(root_id, worktree_id)
               );
-              CREATE TABLE IF NOT EXISTS mailbox_messages (
-                   root_id TEXT NOT NULL, message_id TEXT NOT NULL, sender_task_id TEXT NOT NULL,
-                  recipient_task_id TEXT NOT NULL, sequence INTEGER NOT NULL, artifact_ids TEXT NOT NULL,
-                   acknowledged INTEGER NOT NULL DEFAULT 0,
+               CREATE TABLE IF NOT EXISTS mailbox_messages (
+                    root_id TEXT NOT NULL, message_id TEXT NOT NULL, sender_task_id TEXT NOT NULL,
+                   recipient_task_id TEXT NOT NULL, sequence INTEGER NOT NULL, summary TEXT NOT NULL, artifact_ids TEXT NOT NULL,
+                   changed_paths TEXT NOT NULL, test_summary TEXT, blocked_reason TEXT,
+                    acknowledged INTEGER NOT NULL DEFAULT 0,
                    PRIMARY KEY(root_id, message_id), UNIQUE(root_id, recipient_task_id, sequence)
               );
               CREATE INDEX IF NOT EXISTS idx_mailbox_root_recipient_sequence ON mailbox_messages(root_id, recipient_task_id, sequence, message_id);
@@ -188,6 +193,26 @@ impl ProjectionStore {
         };
         if !has_failure_reason {
             conn.execute("ALTER TABLE memory_jobs ADD COLUMN failure_reason TEXT", [])?;
+        }
+        let mailbox_columns = {
+            let mut statement = conn.prepare("PRAGMA table_info(mailbox_messages)")?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            columns
+        };
+        for (column, definition) in [
+            ("summary", "TEXT NOT NULL DEFAULT ''"),
+            ("changed_paths", "TEXT NOT NULL DEFAULT '[]'"),
+            ("test_summary", "TEXT"),
+            ("blocked_reason", "TEXT"),
+        ] {
+            if !mailbox_columns.iter().any(|existing| existing == column) {
+                conn.execute(
+                    &format!("ALTER TABLE mailbox_messages ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
         }
         let task_columns = {
             let mut statement = conn.prepare("PRAGMA table_info(tasks)")?;
@@ -388,9 +413,13 @@ impl ProjectionStore {
                 sender_task_id,
                 recipient_task_id,
                 sequence,
+                summary,
                 artifact_ids,
+                changed_paths,
+                test_summary,
+                blocked_reason,
             } => {
-                self.conn.execute("INSERT INTO mailbox_messages (message_id, root_id, sender_task_id, recipient_task_id, sequence, artifact_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![message_id, root_id, sender_task_id, recipient_task_id, sequence, serde_json::to_string(artifact_ids).map_err(|_| rusqlite::Error::InvalidParameterName("mailbox artifacts".into()))?])?;
+                self.conn.execute("INSERT INTO mailbox_messages (message_id, root_id, sender_task_id, recipient_task_id, sequence, summary, artifact_ids, changed_paths, test_summary, blocked_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", params![message_id, root_id, sender_task_id, recipient_task_id, sequence, summary, serde_json::to_string(artifact_ids).map_err(|_| rusqlite::Error::InvalidParameterName("mailbox artifacts".into()))?, serde_json::to_string(changed_paths).map_err(|_| rusqlite::Error::InvalidParameterName("mailbox paths".into()))?, test_summary, blocked_reason])?;
             }
             EventKind::MailboxMessageAcknowledged {
                 root_id,
@@ -715,9 +744,9 @@ impl ProjectionStore {
         limit: u64,
     ) -> Result<Vec<MailboxMessage>, rusqlite::Error> {
         let sql = if recipient_task_id.is_some() {
-            "SELECT root_id, message_id, sender_task_id, recipient_task_id, sequence, artifact_ids, acknowledged FROM mailbox_messages WHERE root_id = ?1 AND recipient_task_id = ?2 AND sequence > ?3 ORDER BY sequence ASC, message_id ASC LIMIT ?4"
+            "SELECT root_id, message_id, sender_task_id, recipient_task_id, sequence, summary, artifact_ids, changed_paths, test_summary, blocked_reason, acknowledged FROM mailbox_messages WHERE root_id = ?1 AND recipient_task_id = ?2 AND sequence > ?3 ORDER BY sequence ASC, message_id ASC LIMIT ?4"
         } else {
-            "SELECT root_id, message_id, sender_task_id, recipient_task_id, sequence, artifact_ids, acknowledged FROM mailbox_messages WHERE root_id = ?1 AND sequence > ?2 ORDER BY sequence ASC, message_id ASC LIMIT ?3"
+            "SELECT root_id, message_id, sender_task_id, recipient_task_id, sequence, summary, artifact_ids, changed_paths, test_summary, blocked_reason, acknowledged FROM mailbox_messages WHERE root_id = ?1 AND sequence > ?2 ORDER BY sequence ASC, message_id ASC LIMIT ?3"
         };
         let mut stmt = self.conn.prepare(sql)?;
         let map = |row: &rusqlite::Row<'_>| {
@@ -727,14 +756,24 @@ impl ProjectionStore {
                 sender_task_id: row.get(2)?,
                 recipient_task_id: row.get(3)?,
                 sequence: row.get(4)?,
-                artifact_ids: serde_json::from_str(&row.get::<_, String>(5)?).map_err(|_| {
+                summary: row.get(5)?,
+                artifact_ids: serde_json::from_str(&row.get::<_, String>(6)?).map_err(|_| {
                     rusqlite::Error::InvalidColumnType(
-                        5,
+                        6,
                         "artifact_ids".into(),
                         rusqlite::types::Type::Text,
                     )
                 })?,
-                acknowledged: row.get(6)?,
+                changed_paths: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        7,
+                        "changed_paths".into(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?,
+                test_summary: row.get(8)?,
+                blocked_reason: row.get(9)?,
+                acknowledged: row.get(10)?,
             })
         };
         let rows = match recipient_task_id {

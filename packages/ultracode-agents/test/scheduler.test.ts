@@ -14,7 +14,11 @@ class FakeEventClient implements SchedulerEventClient {
     sender_task_id: string
     recipient_task_id: string
     sequence: number
+    summary: string
     artifact_ids: string[]
+    changed_paths: string[]
+    test_summary: string | null
+    blocked_reason: string | null
     acknowledged: boolean
   }[] = []
   readonly deliverables: {
@@ -85,7 +89,11 @@ class FakeEventClient implements SchedulerEventClient {
         sender_task_id: data.sender_task_id as string,
         recipient_task_id: data.recipient_task_id as string,
         sequence: data.sequence as number,
+        summary: data.summary as string,
         artifact_ids: data.artifact_ids as string[],
+        changed_paths: data.changed_paths as string[],
+        test_summary: data.test_summary as string | null,
+        blocked_reason: data.blocked_reason as string | null,
         acknowledged: false,
       })
     }
@@ -244,7 +252,11 @@ describe("sidecar-backed scheduler", () => {
         sender_task_id: "root-task",
         recipient_task_id: "recipient",
         sequence: 1,
+        summary: "first result",
         artifact_ids: ["artifact-a"],
+        changed_paths: ["src/a.ts"],
+        test_summary: "pass",
+        blocked_reason: null,
       },
     })
     expect(client.mailbox[1]?.acknowledged).toBe(true)
@@ -262,7 +274,11 @@ describe("sidecar-backed scheduler", () => {
         sender_task_id: "root-task",
         recipient_task_id: "recipient",
         sequence: index + 1,
+        summary: "prior",
         artifact_ids: [],
+        changed_paths: [],
+        test_summary: null,
+        blocked_reason: null,
         acknowledged: false,
       })),
     )
@@ -334,6 +350,16 @@ describe("sidecar-backed scheduler", () => {
         manifest: { summary: "x".repeat(4_097), artifactIds: [], changedPaths: [] },
       }),
     ).rejects.toThrow("summary")
+    await expect(
+      scheduler.commitDeliverable({
+        rootId: "root",
+        taskId: "root-task",
+        stateKey: "state-oversized-bytes",
+        deliverableKey: "deliverable-oversized-bytes",
+        status: "completed",
+        manifest: { summary: "€".repeat(1_366), artifactIds: [], changedPaths: [] },
+      }),
+    ).rejects.toThrow("summary")
     expect(client.events).toHaveLength(eventsBefore)
   })
 
@@ -363,7 +389,14 @@ describe("sidecar-backed scheduler", () => {
     })
 
     expect(await scheduler.listEvidence({ rootId: "root", recipientTaskId: "recipient", limit: 1 })).toEqual({
-      mailbox: [expect.objectContaining({ message_id: "message" })],
+      mailbox: [expect.objectContaining({
+        message_id: "message",
+        summary: "evidence",
+        artifact_ids: [],
+        changed_paths: [],
+        test_summary: null,
+        blocked_reason: null,
+      })],
       deliverables: [],
     })
   })

@@ -227,7 +227,13 @@ pub enum EventKind {
         sender_task_id: String,
         recipient_task_id: String,
         sequence: u64,
+        #[serde(default)]
+        summary: String,
         artifact_ids: Vec<String>,
+        #[serde(default)]
+        changed_paths: Vec<String>,
+        test_summary: Option<String>,
+        blocked_reason: Option<String>,
     },
     MailboxMessageAcknowledged {
         root_id: String,

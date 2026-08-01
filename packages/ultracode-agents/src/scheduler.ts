@@ -4,9 +4,10 @@ import { MAX_CHILDREN, MAX_DEPTH, admitTask, transitionTaskState } from "./graph
 import type { Task, TaskInput, TaskState } from "./types"
 
 const EVIDENCE_LIMIT = 100
-const MAX_SUMMARY_LENGTH = 4_096
-const MAX_ARTIFACT_IDS = 100
-const MAX_CHANGED_PATHS = 100
+const MAX_EVIDENCE_TEXT_BYTES = 4_096
+const MAX_EVIDENCE_REFERENCE_BYTES = 1_024
+const MAX_ARTIFACT_IDS = 256
+const MAX_CHANGED_PATHS = 256
 
 export interface EvidenceManifest {
   readonly summary: string
@@ -116,7 +117,11 @@ export function createScheduler(client: SchedulerEventClient) {
           sender_task_id: input.senderTaskId,
           recipient_task_id: input.recipientTaskId,
           sequence,
+          summary: input.evidence.summary,
           artifact_ids: [...input.evidence.artifactIds],
+          changed_paths: [...input.evidence.changedPaths],
+          test_summary: input.evidence.testSummary ?? null,
+          blocked_reason: input.evidence.blockedReason ?? null,
         },
       })
     },
@@ -183,20 +188,24 @@ function validateEvidence(evidence: EvidenceManifest) {
   if (!keys.every((key) => ["summary", "artifactIds", "changedPaths", "testSummary", "blockedReason"].includes(key))) {
     throw new Error("invalid evidence field")
   }
-  if (typeof evidence.summary !== "string" || evidence.summary.length > MAX_SUMMARY_LENGTH) throw new Error("invalid evidence summary")
+  if (!validEvidenceText(evidence.summary, MAX_EVIDENCE_TEXT_BYTES)) throw new Error("invalid evidence summary")
   if (!validStrings(evidence.artifactIds, MAX_ARTIFACT_IDS) || !validStrings(evidence.changedPaths, MAX_CHANGED_PATHS)) {
     throw new Error("invalid evidence references")
   }
-  if (evidence.testSummary !== undefined && (typeof evidence.testSummary !== "string" || evidence.testSummary.length > MAX_SUMMARY_LENGTH)) {
+  if (evidence.testSummary !== undefined && !validEvidenceText(evidence.testSummary, MAX_EVIDENCE_TEXT_BYTES)) {
     throw new Error("invalid test summary")
   }
-  if (evidence.blockedReason !== undefined && (typeof evidence.blockedReason !== "string" || evidence.blockedReason.length > MAX_SUMMARY_LENGTH)) {
+  if (evidence.blockedReason !== undefined && !validEvidenceText(evidence.blockedReason, MAX_EVIDENCE_TEXT_BYTES)) {
     throw new Error("invalid blocked reason")
   }
 }
 
 function validStrings(values: readonly string[], max: number) {
-  return Array.isArray(values) && values.length <= max && values.every((value) => typeof value === "string" && value.length > 0 && value.length <= 1_024)
+  return Array.isArray(values) && values.length <= max && values.every((value) => validEvidenceText(value, MAX_EVIDENCE_REFERENCE_BYTES) && value.length > 0)
+}
+
+function validEvidenceText(value: unknown, maxBytes: number) {
+  return typeof value === "string" && new TextEncoder().encode(value).byteLength <= maxBytes && !/[\u0000-\u001F\u007F-\u009F]/.test(value)
 }
 
 function boundedLimit(limit: number | undefined) {

@@ -61,7 +61,11 @@ export type MailboxMessage = {
   sender_task_id: string
   recipient_task_id: string
   sequence: number
+  summary: string
   artifact_ids: string[]
+  changed_paths: string[]
+  test_summary: string | null
+  blocked_reason: string | null
   acknowledged: boolean
 }
 export type TaskDeliverable = {

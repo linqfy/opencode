@@ -19,7 +19,11 @@ export interface MailboxMessage {
   readonly sender_task_id: string
   readonly recipient_task_id: string
   readonly sequence: number
+  readonly summary: string
   readonly artifact_ids: readonly string[]
+  readonly changed_paths: readonly string[]
+  readonly test_summary: string | null
+  readonly blocked_reason: string | null
   readonly acknowledged: boolean
 }
 

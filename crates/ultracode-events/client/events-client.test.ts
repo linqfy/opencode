@@ -154,14 +154,25 @@ describe("EventsClient", () => {
       kind: "task-state-changed", data: { root_id: "root-client", task_id: "task-client", state: "completed", reason: null },
     })
     await client.proposeCommit("task-message", {
-      kind: "mailbox-message-sent", data: { root_id: "root-client", message_id: "message-client", sender_task_id: "task-client", recipient_task_id: "task-child", sequence: 1, artifact_ids: ["art-client"] },
+      kind: "mailbox-message-sent", data: {
+        root_id: "root-client", message_id: "message-client", sender_task_id: "task-client", recipient_task_id: "task-child", sequence: 1,
+        summary: "child completed the task", artifact_ids: ["art-client"], changed_paths: ["src/task.ts"], test_summary: "bun test", blocked_reason: null,
+      },
     })
     await client.proposeCommit("task-deliverable", {
       kind: "task-deliverable-committed", data: { root_id: "root-client", task_id: "task-client", status: "completed", summary: "done", artifact_ids: [], changed_paths: [], test_summary: null },
     })
 
     expect(await client.listTasks("root-client")).toHaveLength(2)
-    expect(await client.listMailbox("root-client", "task-child")).toHaveLength(1)
+    expect(await client.listMailbox("root-client", "task-child")).toEqual([
+      expect.objectContaining({
+        summary: "child completed the task",
+        artifact_ids: ["art-client"],
+        changed_paths: ["src/task.ts"],
+        test_summary: "bun test",
+        blocked_reason: null,
+      }),
+    ])
     expect(await client.listTaskDeliverables("root-client")).toHaveLength(1)
   })
 })

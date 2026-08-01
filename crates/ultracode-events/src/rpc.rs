@@ -860,8 +860,20 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             sender_task_id,
             recipient_task_id,
             sequence,
+            summary,
+            artifact_ids,
+            changed_paths,
+            test_summary,
+            blocked_reason,
             ..
         } => {
+            validate_mailbox_evidence(
+                summary,
+                artifact_ids,
+                changed_paths,
+                test_summary.as_deref(),
+                blocked_reason.as_deref(),
+            )?;
             journal_task(&journal, root_id, sender_task_id)?;
             journal_task(&journal, root_id, recipient_task_id)?;
             if journal
@@ -918,6 +930,57 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn validate_mailbox_evidence(
+    summary: &str,
+    artifact_ids: &[String],
+    changed_paths: &[String],
+    test_summary: Option<&str>,
+    blocked_reason: Option<&str>,
+) -> Result<(), String> {
+    validate_mailbox_text("summary", summary, 4096)?;
+    if artifact_ids.len() > 256 {
+        return Err("invalid mailbox evidence: artifact_ids exceeds 256 entries".into());
+    }
+    if changed_paths.len() > 256 {
+        return Err("invalid mailbox evidence: changed_paths exceeds 256 entries".into());
+    }
+    validate_mailbox_references("artifact_ids", artifact_ids)?;
+    validate_mailbox_references("changed_paths", changed_paths)?;
+    if let Some(value) = test_summary {
+        validate_mailbox_text("test_summary", value, 4096)?;
+    }
+    if let Some(value) = blocked_reason {
+        validate_mailbox_text("blocked_reason", value, 4096)?;
+    }
+    Ok(())
+}
+
+fn validate_mailbox_references(name: &str, values: &[String]) -> Result<(), String> {
+    for value in values {
+        validate_mailbox_text(name, value, 1024)?;
+        if value.is_empty() {
+            return Err(format!(
+                "invalid mailbox evidence: {name} contains an empty value"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_mailbox_text(name: &str, value: &str, max_bytes: usize) -> Result<(), String> {
+    if value.len() > max_bytes {
+        return Err(format!(
+            "invalid mailbox evidence: {name} exceeds {max_bytes} bytes"
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!(
+            "invalid mailbox evidence: {name} contains control characters"
+        ));
     }
     Ok(())
 }
@@ -1771,6 +1834,70 @@ mod tests {
                 .unwrap(),
             live_deliverables
         );
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn mailbox_evidence_survives_rebuild_and_rejects_oversized_input_before_append() {
+        let (journal, db, blobs) = dirs("mailbox-evidence");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        for task_id in ["sender", "recipient"] {
+            assert!(handle_request(
+                &mut state,
+                &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 } } }))
+            )
+            .error
+            .is_none());
+        }
+        let message = json!({ "kind": "mailbox-message-sent", "data": {
+            "root_id": "root", "message_id": "evidence", "sender_task_id": "sender", "recipient_task_id": "recipient", "sequence": 1,
+            "summary": "implemented durable evidence", "artifact_ids": ["art-1"], "changed_paths": ["src/a.rs"], "test_summary": "cargo test", "blocked_reason": null
+        }});
+        assert!(handle_request(
+            &mut state,
+            &req(
+                2,
+                "propose_commit",
+                json!({ "key": "evidence", "kind": message })
+            )
+        )
+        .error
+        .is_none());
+        let live = state
+            .projections
+            .list_mailbox("root", Some("recipient"), 0, 100)
+            .unwrap();
+        state.projections.rebuild(&journal, "ses_1").unwrap();
+        assert_eq!(
+            state
+                .projections
+                .list_mailbox("root", Some("recipient"), 0, 100)
+                .unwrap(),
+            live
+        );
+        let evidence = serde_json::to_value(&live[0]).unwrap();
+        assert_eq!(evidence["summary"], "implemented durable evidence");
+        assert_eq!(evidence["changed_paths"], json!(["src/a.rs"]));
+        assert_eq!(evidence["test_summary"], "cargo test");
+        assert_eq!(evidence["blocked_reason"], Value::Null);
+
+        let count = state.projections.count().unwrap();
+        let rejected = handle_request(
+            &mut state,
+            &req(
+                3,
+                "propose_commit",
+                json!({ "key": "too-large", "kind": { "kind": "mailbox-message-sent", "data": {
+                "root_id": "root", "message_id": "too-large", "sender_task_id": "sender", "recipient_task_id": "recipient", "sequence": 2,
+                "summary": "x".repeat(4097), "artifact_ids": [], "changed_paths": [], "test_summary": null, "blocked_reason": null
+            } } }),
+            ),
+        );
+        assert_eq!(
+            rejected.error.as_deref(),
+            Some("invalid mailbox evidence: summary exceeds 4096 bytes")
+        );
+        assert_eq!(state.projections.count().unwrap(), count);
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
 
