@@ -625,6 +625,7 @@
         "@types/ws": "8.18.1",
         "@ultracode/agents": "workspace:*",
         "@ultracode/context": "workspace:*",
+        "@ultracode/events-client": "workspace:*",
         "@ultracode/schema": "workspace:*",
         "@zip.js/zip.js": "2.7.62",
         "ai": "catalog:",
@@ -1045,6 +1046,15 @@
       "dependencies": {
         "effect": "catalog:",
       },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+      },
+    },
+    "packages/ultracode-events-client": {
+      "name": "@ultracode/events-client",
+      "version": "0.0.1",
       "devDependencies": {
         "@tsconfig/bun": "catalog:",
         "@types/bun": "catalog:",
@@ -3055,6 +3065,8 @@
     "@ultracode/agents": ["@ultracode/agents@workspace:packages/ultracode-agents"],
 
     "@ultracode/context": ["@ultracode/context@workspace:packages/ultracode-context"],
+
+    "@ultracode/events-client": ["@ultracode/events-client@workspace:packages/ultracode-events-client"],
 
     "@ultracode/memory": ["@ultracode/memory@workspace:packages/ultracode-memory"],
 

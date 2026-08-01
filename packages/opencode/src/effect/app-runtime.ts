@@ -54,6 +54,11 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilderV1 } from "./app-node-builder-v1"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
+import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
+import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { buildLocationServiceMap } from "@opencode-ai/core/location-services"
 
 export const AppLayer = AppNodeBuilderV1.build(
   LayerNode.group([
@@ -106,7 +111,16 @@ export const AppLayer = AppNodeBuilderV1.build(
     ShareNext.node,
     SessionShare.node,
   ]),
-).pipe(Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)), Layer.provideMerge(Observability.layer))
+).pipe(
+  Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)),
+  Layer.provideMerge(
+    AppNodeBuilderV1.build(SessionV2.node, [
+      [LocationServiceMap.node, buildLocationServiceMap()],
+      [SessionExecution.node, SessionExecutionLocal.node],
+    ]),
+  ),
+  Layer.provideMerge(Observability.layer),
+)
 
 const rt = ManagedRuntime.make(AppLayer, { memoMap })
 type Runtime = Pick<typeof rt, "runSync" | "runPromise" | "runPromiseExit" | "runFork" | "runCallback" | "dispose">

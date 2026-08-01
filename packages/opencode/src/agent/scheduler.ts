@@ -46,7 +46,7 @@ export interface ChildExecutionResult {
 }
 
 export function createWorktreeLeaseAdapter(
-  parentLocation: ChildLocation,
+  parentLocation: ChildLocation | (() => Effect.Effect<ChildLocation>),
   worktree: Worktree.Interface,
   waitReady: (info: Worktree.Info) => Effect.Effect<void, never, Scope.Scope> = waitForReady,
 ) {
@@ -56,10 +56,11 @@ export function createWorktreeLeaseAdapter(
   const acquire = Effect.fn("SchedulerWorktree.acquire")(function* (input: WorktreeLeaseInput) {
     validateIdentity(input)
     if (!input.stateChanging) {
+      const location = typeof parentLocation === "function" ? yield* parentLocation() : parentLocation
       return {
         rootId: input.rootId,
         taskId: input.taskId,
-        location: parentLocation,
+        location,
         write: false,
         ready: true,
       } satisfies WorktreeLease
