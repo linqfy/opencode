@@ -53,6 +53,7 @@ pub struct SidecarState {
     pub artifacts: ArtifactStore,
     pub journal_dir: PathBuf,
     pub session: String,
+    task_journal: TaskJournal,
 }
 
 impl SidecarState {
@@ -68,12 +69,14 @@ impl SidecarState {
         let mut projections = ProjectionStore::open(db_path).map_err(io::Error::other)?;
         projections.rebuild(journal_dir, session)?;
         let artifacts = ArtifactStore::open(artifact_root, db_path).map_err(io::Error::other)?;
+        let task_journal = task_journal(journal_dir, session).map_err(io::Error::other)?;
         Ok(SidecarState {
             commit,
             projections,
             artifacts,
             journal_dir: journal_dir.to_path_buf(),
             session: session.to_string(),
+            task_journal,
         })
     }
 }
@@ -145,7 +148,7 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             }
             {
                 state.projections.validate_memory_result(&kind)?;
-                validate_task_event_from_journal(&state.journal_dir, &state.session, &kind)?;
+                validate_task_event_from_journal(&state.task_journal, &kind)?;
             }
             let outcome = state.commit.propose(key, kind).map_err(|e| e.to_string())?;
             let (record, duplicate) = match outcome {
@@ -153,6 +156,7 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 CommitOutcome::Duplicate(r) => (r, true),
             };
             if !duplicate {
+                apply_task_event(&mut state.task_journal, &record.event.kind)?;
                 if state.projections.index_record(&record).is_err() {
                     let _ = state
                         .projections
@@ -237,6 +241,9 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .params
                 .get("after_sequence")
                 .map_or(Ok(0), |value| value.as_u64().ok_or("bad after_sequence"))?;
+            if recipient_task_id.is_none() && after_sequence != 0 {
+                return Err("mailbox cursor requires recipient_task_id".into());
+            }
             let limit = req
                 .params
                 .get("limit")
@@ -439,7 +446,7 @@ struct TaskJournal {
     tasks: HashMap<(String, String), JournalTask>,
     worktrees: HashMap<(String, String), String>,
     messages: HashMap<(String, String), String>,
-    sequences: HashSet<(String, String, u64)>,
+    mailbox_sequences: HashMap<(String, String), u64>,
     deliverables: HashSet<(String, String)>,
 }
 
@@ -518,7 +525,10 @@ fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
                 ..
             } => {
                 if let Some(task) = result.tasks.get_mut(&(root_id, task_id)) {
-                    task.used += amount;
+                    task.used = task
+                        .used
+                        .checked_add(amount)
+                        .ok_or("task budget use overflow")?;
                 }
             }
             EventKind::WorktreeLeased {
@@ -549,8 +559,8 @@ fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
                 ..
             } => {
                 result
-                    .sequences
-                    .insert((root_id.clone(), recipient_task_id.clone(), sequence));
+                    .mailbox_sequences
+                    .insert((root_id.clone(), recipient_task_id.clone()), sequence);
                 result
                     .messages
                     .insert((root_id, message_id), recipient_task_id);
@@ -566,6 +576,122 @@ fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
     Ok(result)
 }
 
+fn apply_task_event(journal: &mut TaskJournal, kind: &EventKind) -> Result<(), String> {
+    match kind {
+        EventKind::TaskSpawned {
+            root_id,
+            task_id,
+            parent_task_id,
+            depth,
+            state_changing,
+            budget,
+            ..
+        } => {
+            journal.tasks.insert(
+                (root_id.clone(), task_id.clone()),
+                JournalTask {
+                    parent: parent_task_id.clone(),
+                    depth: *depth,
+                    state_changing: *state_changing,
+                    budget: *budget,
+                    state: "pending".into(),
+                    reservation: None,
+                    used: 0,
+                },
+            );
+        }
+        EventKind::TaskStateChanged {
+            root_id,
+            task_id,
+            state,
+            ..
+        } => {
+            if let Some(task) = journal.tasks.get_mut(&(root_id.clone(), task_id.clone())) {
+                task.state = state.clone();
+            }
+        }
+        EventKind::TaskCancellationRequested {
+            root_id, task_id, ..
+        } => {
+            if let Some(task) = journal.tasks.get_mut(&(root_id.clone(), task_id.clone())) {
+                task.state = "cancelled".into();
+            }
+        }
+        EventKind::TaskBudgetReserved {
+            root_id,
+            task_id,
+            parent,
+            child_pool,
+            synthesis,
+        } => {
+            if let Some(task) = journal.tasks.get_mut(&(root_id.clone(), task_id.clone())) {
+                task.reservation = Some((*parent, *child_pool, *synthesis));
+            }
+        }
+        EventKind::TaskBudgetUsed {
+            root_id,
+            task_id,
+            amount,
+            ..
+        } => {
+            if let Some(task) = journal.tasks.get_mut(&(root_id.clone(), task_id.clone())) {
+                task.used = task
+                    .used
+                    .checked_add(*amount)
+                    .ok_or("task budget use overflow")?;
+            }
+        }
+        EventKind::WorktreeLeased {
+            root_id,
+            task_id,
+            worktree_id,
+        } => {
+            journal
+                .worktrees
+                .insert((root_id.clone(), worktree_id.clone()), task_id.clone());
+        }
+        EventKind::WorktreeReleased {
+            root_id,
+            task_id,
+            worktree_id,
+        } => {
+            if journal
+                .worktrees
+                .get(&(root_id.clone(), worktree_id.clone()))
+                == Some(task_id)
+            {
+                journal
+                    .worktrees
+                    .remove(&(root_id.clone(), worktree_id.clone()));
+            }
+        }
+        EventKind::MailboxMessageSent {
+            root_id,
+            message_id,
+            recipient_task_id,
+            sequence,
+            ..
+        } => {
+            journal
+                .mailbox_sequences
+                .insert((root_id.clone(), recipient_task_id.clone()), *sequence);
+            journal.messages.insert(
+                (root_id.clone(), message_id.clone()),
+                recipient_task_id.clone(),
+            );
+        }
+        EventKind::TaskDeliverableCommitted {
+            root_id, task_id, ..
+        } => {
+            journal
+                .deliverables
+                .insert((root_id.clone(), task_id.clone()));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn journal_task<'a>(
     journal: &'a TaskJournal,
     root_id: &str,
@@ -577,12 +703,7 @@ fn journal_task<'a>(
         .ok_or_else(|| format!("unknown task: {task_id}"))
 }
 
-fn validate_task_event_from_journal(
-    dir: &Path,
-    session: &str,
-    kind: &EventKind,
-) -> Result<(), String> {
-    let journal = task_journal(dir, session)?;
+fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> Result<(), String> {
     match kind {
         EventKind::TaskSpawned {
             root_id,
@@ -679,7 +800,10 @@ fn validate_task_event_from_journal(
                 return Err("task budget is not reserved".into());
             };
             if matches!(task.state.as_str(), "completed" | "failed" | "cancelled")
-                || task.used + amount > pool
+                || task
+                    .used
+                    .checked_add(*amount)
+                    .map_or(true, |used| used > pool)
             {
                 return Err("task child-pool budget exceeded".into());
             }
@@ -747,10 +871,11 @@ fn validate_task_event_from_journal(
                 return Err(format!("duplicate mailbox message: {message_id}"));
             }
             if journal
-                .sequences
-                .contains(&(root_id.clone(), recipient_task_id.clone(), *sequence))
+                .mailbox_sequences
+                .get(&(root_id.clone(), recipient_task_id.clone()))
+                .is_some_and(|previous| sequence <= previous)
             {
-                return Err("duplicate mailbox sequence".into());
+                return Err("mailbox sequence must increase".into());
             }
         }
         EventKind::MailboxMessageAcknowledged {
@@ -797,6 +922,7 @@ fn validate_task_event_from_journal(
     Ok(())
 }
 
+/* Obsolete projection-backed task validation; journal folding is authoritative.
 fn validate_task_event(projections: &ProjectionStore, kind: &EventKind) -> Result<(), String> {
     match kind {
         EventKind::TaskSpawned {
@@ -969,6 +1095,7 @@ fn require_task(
     }
     Err(format!("unknown task: {task_id}"))
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -1465,6 +1592,9 @@ mod tests {
         assert!(commit(&mut state, "wrong-target", json!({ "kind": "task-budget-used", "data": { "root_id": "root-a", "task_id": "child", "amount": 1, "target": "synthesis" }})).error.unwrap().contains("child-pool"));
         assert!(commit(&mut state, "use-pool", json!({ "kind": "task-budget-used", "data": { "root_id": "root-a", "task_id": "child", "amount": 3, "target": "child-pool" }})).error.is_none());
         assert!(commit(&mut state, "overuse", json!({ "kind": "task-budget-used", "data": { "root_id": "root-a", "task_id": "child", "amount": 1, "target": "child-pool" }})).error.unwrap().contains("budget exceeded"));
+        let count = state.projections.count().unwrap();
+        assert!(commit(&mut state, "overflow", json!({ "kind": "task-budget-used", "data": { "root_id": "root-a", "task_id": "child", "amount": u64::MAX, "target": "child-pool" }})).error.unwrap().contains("budget exceeded"));
+        assert_eq!(state.projections.count().unwrap(), count);
 
         assert!(commit(&mut state, "cancel", json!({ "kind": "task-cancellation-requested", "data": { "root_id": "root-a", "task_id": "child", "reason": "stop" }})).error.is_none());
         assert_eq!(
@@ -1503,7 +1633,7 @@ mod tests {
         for (root, sequence) in [("root-a", 1), ("root-a", 2), ("root-b", 1)] {
             assert!(commit(&mut state, &format!("{root}-message-{sequence}"), json!({ "kind": "mailbox-message-sent", "data": { "root_id": root, "message_id": format!("message-{sequence}"), "sender_task_id": "root", "recipient_task_id": "child", "sequence": sequence, "artifact_ids": [] }})).error.is_none());
         }
-        assert!(commit(&mut state, "duplicate-sequence", json!({ "kind": "mailbox-message-sent", "data": { "root_id": "root-a", "message_id": "message-other", "sender_task_id": "root", "recipient_task_id": "child", "sequence": 1, "artifact_ids": [] }})).error.unwrap().contains("duplicate mailbox sequence"));
+        assert!(commit(&mut state, "duplicate-sequence", json!({ "kind": "mailbox-message-sent", "data": { "root_id": "root-a", "message_id": "message-other", "sender_task_id": "root", "recipient_task_id": "child", "sequence": 1, "artifact_ids": [] }})).error.unwrap().contains("mailbox sequence must increase"));
         assert_eq!(
             state
                 .projections
@@ -1581,7 +1711,7 @@ mod tests {
         assert!(commit(&mut state, "bad-release", json!({ "kind": "worktree-released", "data": { "root_id": "root-a", "task_id": "child-b", "worktree_id": "wt-a" }})).error.unwrap().contains("mismatch"));
         assert!(commit(&mut state, "release", json!({ "kind": "worktree-released", "data": { "root_id": "root-a", "task_id": "child-a", "worktree_id": "wt-a" }})).error.is_none());
 
-        for sequence in [2, 1] {
+        for sequence in [1, 2] {
             assert!(commit(&mut state, &format!("message-{sequence}"), json!({ "kind": "mailbox-message-sent", "data": { "root_id": "root-a", "message_id": format!("message-{sequence}"), "sender_task_id": "root", "recipient_task_id": "child-a", "sequence": sequence, "artifact_ids": ["art"] }})).error.is_none());
         }
         assert_eq!(
@@ -1640,6 +1770,71 @@ mod tests {
                 .list_task_deliverables("root-a", 500)
                 .unwrap(),
             live_deliverables
+        );
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn mailbox_sequences_are_monotonic_after_restart() {
+        let (journal, db, blobs) = dirs("mailbox-restart");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        for task_id in ["sender", "recipient"] {
+            assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 } } }))).error.is_none());
+        }
+        assert!(handle_request(&mut state, &req(2, "propose_commit", json!({ "key": "two", "kind": { "kind": "mailbox-message-sent", "data": { "root_id": "root", "message_id": "two", "sender_task_id": "sender", "recipient_task_id": "recipient", "sequence": 2, "artifact_ids": [] } } }))).error.is_none());
+        drop(state);
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let count = state.projections.count().unwrap();
+        let rejected = handle_request(
+            &mut state,
+            &req(
+                3,
+                "propose_commit",
+                json!({ "key": "one", "kind": { "kind": "mailbox-message-sent", "data": { "root_id": "root", "message_id": "one", "sender_task_id": "sender", "recipient_task_id": "recipient", "sequence": 1, "artifact_ids": [] } } }),
+            ),
+        );
+        assert_eq!(
+            rejected.error.as_deref(),
+            Some("mailbox sequence must increase")
+        );
+        assert_eq!(state.projections.count().unwrap(), count);
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn mailbox_cursor_requires_recipient_task_id() {
+        let (journal, db, blobs) = dirs("mailbox-cursor");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        for task_id in ["sender", "a", "b"] {
+            assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 } } }))).error.is_none());
+        }
+        for recipient in ["a", "b"] {
+            assert!(handle_request(&mut state, &req(2, "propose_commit", json!({ "key": format!("message-{recipient}"), "kind": { "kind": "mailbox-message-sent", "data": { "root_id": "root", "message_id": format!("message-{recipient}"), "sender_task_id": "sender", "recipient_task_id": recipient, "sequence": 1, "artifact_ids": [] } } }))).error.is_none());
+        }
+        assert_eq!(
+            handle_request(
+                &mut state,
+                &req(3, "list_mailbox", json!({ "root_id": "root" }))
+            )
+            .result
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+            2
+        );
+        assert_eq!(
+            handle_request(
+                &mut state,
+                &req(
+                    4,
+                    "list_mailbox",
+                    json!({ "root_id": "root", "after_sequence": 1 })
+                )
+            )
+            .error
+            .as_deref(),
+            Some("mailbox cursor requires recipient_task_id")
         );
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
