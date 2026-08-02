@@ -17,7 +17,7 @@ const runtime = {
     prompt: () => Effect.die("unexpected"),
   },
   execution: {
-    wake: () => Effect.die("unexpected"),
+    supervise: () => Effect.die("unexpected"),
     interrupt: () => Effect.die("unexpected"),
   },
 }

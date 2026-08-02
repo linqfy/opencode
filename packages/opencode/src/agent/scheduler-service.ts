@@ -160,12 +160,15 @@ export const layer = Layer.unwrap(
             ),
         },
         execution: {
-          wake: (sessionID) =>
+          supervise: (input) =>
             Effect.context<never>().pipe(
               Effect.flatMap((context) =>
-                (Context.get(context as never, SessionExecution.Service) as SessionExecution.Interface).wake(
-                  SessionSchema.ID.make(sessionID),
-                ),
+                (Context.get(context as never, SessionExecution.Service) as SessionExecution.Interface).supervise({
+                  sessionID: SessionSchema.ID.make(input.sessionID),
+                  maxTokens: input.maxTokens,
+                  maxTurns: input.maxTurns,
+                  timeoutMs: input.timeoutMs,
+                }),
               ),
             ),
           interrupt: (sessionID) =>

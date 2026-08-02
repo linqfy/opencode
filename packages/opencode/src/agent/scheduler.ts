@@ -1,5 +1,6 @@
 import { Deferred, Effect, Scope } from "effect"
 import { createScheduler } from "@ultracode/agents"
+import type { SessionExecution } from "@opencode-ai/core/session/execution"
 import type { TaskSchedulerAdapter } from "@/tool/task"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { Worktree } from "@/worktree"
@@ -40,7 +41,12 @@ export interface ChildSessionBoundary {
 }
 
 export interface ChildExecutionBoundary {
-  readonly wake: (sessionID: string) => Effect.Effect<void>
+  readonly supervise: (input: {
+    readonly sessionID: string
+    readonly maxTokens: number
+    readonly maxTurns: number
+    readonly timeoutMs: number
+  }) => Effect.Effect<SessionExecution.TerminalRunResult, Error>
   readonly interrupt: (sessionID: string) => Effect.Effect<void | { readonly observed: boolean }>
 }
 
@@ -52,7 +58,9 @@ export interface ChildSessionInput {
   readonly agent: string
   readonly model: { readonly modelID: string; readonly providerID: string }
   readonly toolConstraints: readonly string[]
-  readonly maxTurns?: number
+  readonly maxTurns: number
+  readonly maxTokens: number
+  readonly timeoutMs: number
   readonly forkMode: "none" | "recent" | "full"
   readonly parent: { readonly sessionID: string; readonly messageID: string }
 }
@@ -60,6 +68,7 @@ export interface ChildSessionInput {
 export interface ChildExecutionResult {
   readonly sessionId: string
   readonly inputId: string
+  readonly terminal: SessionExecution.TerminalRunResult
 }
 
 export interface ChildCancellation {
@@ -162,8 +171,13 @@ export function createChildSessionAdapter(input: {
         parent: child.parent,
       })
       yield* input.session.prompt({ id: inputId, sessionID: sessionId, prompt: child.prompt, resume: false })
-      yield* input.execution.wake(sessionId)
-      const result = { sessionId, inputId } satisfies ChildExecutionResult
+      const terminal = yield* input.execution.supervise({
+        sessionID: sessionId,
+        maxTokens: child.maxTokens,
+        maxTurns: child.maxTurns,
+        timeoutMs: child.timeoutMs,
+      })
+      const result = { sessionId, inputId, terminal } satisfies ChildExecutionResult
       started.set(key, result)
       return result
     }).pipe(Effect.onExit(() => Effect.sync(() => starting.delete(key))))
@@ -205,7 +219,12 @@ export function createTaskSchedulerAdapter(input: {
         const taskId = request.requestedTaskId ?? childTaskID(rootId, request)
         const current = active.get(taskId)
         if (current) return current.handle
-        const budget = request.budget.maxTokens ?? 1_000
+        const maxTokens = request.budget.maxTokens
+        const maxTurns = request.budget.maxTurns
+        const timeoutMs = request.budget.maxTimeMs
+        if (maxTokens === undefined || maxTurns === undefined || timeoutMs === undefined)
+          return yield* Effect.fail(new Error("scheduler tasks require maxTokens, maxTurns, and maxTimeMs"))
+        const budget = maxTokens
         const rootBudget = Math.ceil(budget / 3) * 10
         yield* Effect.promise(() =>
           input.scheduler.spawn({
@@ -217,7 +236,7 @@ export function createTaskSchedulerAdapter(input: {
               stateChanging: false,
               dependencyIds: [],
               requestedMaxTokens: rootBudget,
-              requestedMaxTimeMs: request.budget.maxTimeMs ?? 0,
+              requestedMaxTimeMs: timeoutMs,
               forkMode: "none",
               selectedEvidenceArtifactIds: [],
               toolIds: [],
@@ -237,7 +256,7 @@ export function createTaskSchedulerAdapter(input: {
               stateChanging: true,
               dependencyIds: [],
               requestedMaxTokens: budget,
-              requestedMaxTimeMs: request.budget.maxTimeMs ?? 0,
+              requestedMaxTimeMs: timeoutMs,
               forkMode: request.forkMode,
               selectedEvidenceArtifactIds: [],
               toolIds: request.agent.toolConstraints,
@@ -259,7 +278,7 @@ export function createTaskSchedulerAdapter(input: {
             `task:${rootId}:${taskId}:worktree-leased`,
           ),
         )
-        yield* input.child.start({
+        const child = yield* input.child.start({
           rootId,
           taskId,
           location: lease.location,
@@ -267,16 +286,24 @@ export function createTaskSchedulerAdapter(input: {
           agent: request.agent.name,
           model: request.agent.model,
           toolConstraints: request.agent.toolConstraints,
-          maxTurns: request.budget.maxTurns,
+          maxTurns,
+          maxTokens,
+          timeoutMs,
           forkMode: request.forkMode,
           parent: { sessionID: request.parent.sessionID, messageID: request.parent.messageID },
         })
         const handle = {
           rootId,
           taskId,
-          status: "running",
-          summary: "Task scheduled",
-          evidence: { summary: "Task is running; use the task handle for status.", artifactIds: [], changedPaths: [] },
+          status: child.terminal.status === "completed" ? "completed" : "waiting",
+          summary: child.terminal.summary ?? child.terminal.status,
+          evidence: {
+            summary: child.terminal.summary ?? child.terminal.status,
+            artifactIds: child.terminal.artifactIds,
+            changedPaths: child.terminal.changedPaths,
+            ...(child.terminal.testSummary === undefined ? {} : { testSummary: child.terminal.testSummary }),
+            ...(child.terminal.blockedReason === undefined ? {} : { blockedReason: child.terminal.blockedReason }),
+          },
         } satisfies TaskSchedulerAdapter.Handle
         active.set(taskId, { rootId, lease, handle })
         return handle

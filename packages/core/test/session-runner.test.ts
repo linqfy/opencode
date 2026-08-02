@@ -240,14 +240,20 @@ const execution = Layer.effect(
   SessionExecution.Service,
   Effect.gen(function* () {
     const sessionRunner = yield* SessionRunner.Service
-    const coordinator = yield* SessionRunCoordinator.make<SessionV2.ID, SessionRunner.RunError>({
-      drain: (sessionID, force) => sessionRunner.run({ sessionID, force }),
+    const coordinator = yield* SessionRunCoordinator.make<
+      SessionV2.ID,
+      SessionRunner.RunError,
+      SessionRunner.RunResult,
+      SessionRunner.Limits
+    >({
+      drain: (sessionID, force, limits) => sessionRunner.run({ sessionID, force, limits }),
     })
     return SessionExecution.Service.of({
       active: coordinator.active,
-      resume: coordinator.run,
+      resume: (sessionID) => coordinator.run(sessionID).pipe(Effect.asVoid),
       wake: coordinator.wake,
       interrupt: coordinator.interrupt,
+      supervise: (input) => SessionExecution.supervise(coordinator, input),
     })
   }),
 ).pipe(Layer.provide(runnerLayer))
@@ -521,6 +527,41 @@ const verifyPartialFlushOnFailure = (kind: FragmentKind) =>
       },
     ])
   })
+
+describe("supervised Session V2 execution", () => {
+  it.effect("stops before a continuation provider turn exhausts its token cap", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const execution = yield* SessionExecution.Service
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolInputStart({ id: "call-supervised", name: "echo" }),
+          LLMEvent.toolInputDelta({ id: "call-supervised", name: "echo", text: "first" }),
+          LLMEvent.toolInputEnd({ id: "call-supervised", name: "echo" }),
+          LLMEvent.toolCall({ id: "call-supervised", name: "echo", input: { text: "first" } }),
+          LLMEvent.stepFinish({
+            index: 0,
+            reason: "tool-calls",
+            usage: { inputTokens: 2, nonCachedInputTokens: 2, outputTokens: 3, totalTokens: 5 },
+          }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-supervised-second", ["must not run"]).completeEvents,
+      ]
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "work" }), resume: false })
+
+      const result = yield* execution.supervise({ sessionID, maxTokens: 5, maxTurns: 2, timeoutMs: 1_000 })
+
+      expect(result.status).toBe("budget_exhausted")
+      expect(result.usage.tokens).toBe(5)
+      expect(result.usage.turns).toBe(1)
+      expect(requests).toHaveLength(1)
+      expect(Object.keys(result)).not.toContain("transcript")
+    }),
+  )
+})
 
 const verifyPartialFlushOnInterruption = (kind: FragmentKind) =>
   Effect.gen(function* () {

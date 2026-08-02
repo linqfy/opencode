@@ -40,6 +40,7 @@ const execution = Layer.succeed(
       Effect.sync(() => {
         wakeCalls.push(sessionID)
       }),
+    supervise: () => Effect.die("unexpected"),
   }),
 )
 const it = testEffect(

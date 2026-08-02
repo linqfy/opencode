@@ -31,7 +31,7 @@ import { SessionHistory } from "../history"
 import { SessionInput } from "../input"
 import { SessionSchema } from "../schema"
 import { SessionStore } from "../store"
-import { type RunError, Service } from "./index"
+import { SessionRunner, type RunError, Service } from "./index"
 import { SessionRunnerModel } from "./model"
 import { createLLMEventPublisher } from "./publish-llm-event"
 import { toLLMMessages } from "./to-llm-message"
@@ -174,8 +174,11 @@ const layer = Layer.effect(
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
       step: number,
+      limits: { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number } | undefined,
       recoverOverflow?: typeof compaction.compactAfterOverflow,
     ) {
+      if (limits && (limits.turns >= limits.maxTurns || limits.tokens >= limits.maxTokens))
+        return { status: "budget_exhausted" as const, needsContinuation: false, step, tokens: 0, changedPaths: [] }
       const session = yield* getSession(sessionID)
       if (session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID)
         return yield* Effect.interrupt
@@ -200,12 +203,11 @@ const layer = Layer.effect(
       const entries = yield* SessionHistory.entriesForRunner(db, session.id, system.baselineSeq)
       const context = entries.map((entry) => entry.message)
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
-      const toolMaterialization = isLastStep
-        ? undefined
-        : yield* tools.materialize(agent.info?.permissions)
+      const toolMaterialization = isLastStep ? undefined : yield* tools.materialize(agent.info?.permissions)
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
       const request = LLM.request({
         model,
+        ...(limits ? { generation: { maxTokens: limits.maxTokens - limits.tokens } } : {}),
         providerOptions: { openai: { promptCacheKey } },
         system: [agent.info?.system, system.baseline]
           .filter((part): part is string => part !== undefined && part.length > 0)
@@ -231,6 +233,8 @@ const layer = Layer.effect(
       const publish = (event: LLMEvent, outputPaths: ReadonlyArray<string> = []) =>
         withPublication(publisher.publish(event, outputPaths))
       let overflowFailure: ProviderErrorEvent | undefined
+      let changedPaths: readonly string[] = []
+      if (limits) limits.turns++
       const providerStream = llm.stream(request).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
@@ -324,6 +328,7 @@ const layer = Layer.effect(
                     .files({ from: startSnapshot, to: endSnapshot })
                     .pipe(Effect.catch(() => Effect.succeed(undefined)))
                 : undefined
+            changedPaths = files ?? []
             yield* withPublication(
               events.publish(SessionEvent.Step.Ended, {
                 sessionID: session.id,
@@ -344,7 +349,17 @@ const layer = Layer.effect(
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (settled._tag === "Failure" && Cause.hasInterrupts(settled.cause))
             return yield* Effect.failCause(settled.cause)
-          return { needsContinuation: !publisher.hasProviderError() && needsContinuation, step: currentStep }
+          const usage = publisher.stepSettlement()?.tokens
+          const tokens = usage ? usage.input + usage.output + usage.reasoning + usage.cache.read + usage.cache.write : 0
+          if (limits) limits.tokens += tokens
+          return {
+            status:
+              limits && limits.tokens >= limits.maxTokens ? ("budget_exhausted" as const) : ("completed" as const),
+            needsContinuation: !publisher.hasProviderError() && needsContinuation,
+            step: currentStep,
+            tokens,
+            changedPaths,
+          }
         }),
       )
     }, Effect.scoped)
@@ -352,31 +367,41 @@ const layer = Layer.effect(
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
       step: number,
-    ) => Effect.Effect<{ readonly needsContinuation: boolean; readonly step: number }, RunError>
+      limits: { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number } | undefined,
+    ) => Effect.Effect<
+      {
+        readonly status: "completed" | "budget_exhausted"
+        readonly needsContinuation: boolean
+        readonly step: number
+        readonly tokens: number
+        readonly changedPaths: readonly string[]
+      },
+      RunError
+    >
 
-    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step) {
-      return yield* runTurnAttempt(sessionID, promotion, step).pipe(
+    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, limits) {
+      return yield* runTurnAttempt(sessionID, promotion, step, limits).pipe(
         Effect.catchDefect(
           Effect.fnUntraced(function* (defect) {
             if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
             if (defect.transition._tag === "ContinueAfterOverflowCompaction")
               return yield* Effect.die("Post-compaction provider attempt cannot recover another overflow")
             yield* Effect.yieldNow
-            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step)
+            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, limits)
           }),
         ),
       )
     })
 
-    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step) {
-      return yield* runTurnAttempt(sessionID, promotion, step, compaction.compactAfterOverflow).pipe(
+    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, limits) {
+      return yield* runTurnAttempt(sessionID, promotion, step, limits, compaction.compactAfterOverflow).pipe(
         Effect.catchDefect(
           Effect.fnUntraced(function* (defect) {
             if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
             yield* Effect.yieldNow
             if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step)
-            return yield* runTurn(sessionID, undefined, defect.transition.step)
+              return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, limits)
+            return yield* runTurn(sessionID, undefined, defect.transition.step, limits)
           }),
         ),
       )
@@ -385,18 +410,33 @@ const layer = Layer.effect(
     const run = Effect.fn("SessionRunner.run")(function* (input: {
       readonly sessionID: SessionSchema.ID
       readonly force: boolean
+      readonly limits?: SessionRunner.Limits
     }) {
       const hasSteer = yield* SessionInput.hasPending(db, input.sessionID, "steer")
       const hasQueue = hasSteer ? false : yield* SessionInput.hasPending(db, input.sessionID, "queue")
-      if (!input.force && !hasSteer && !hasQueue) return
+      if (!input.force && !hasSteer && !hasQueue)
+        return { status: "completed" as const, usage: { tokens: 0, turns: 0 }, changedPaths: [] }
       yield* failInterruptedTools(input.sessionID)
+      const limits = input.limits && { ...input.limits, tokens: 0, turns: 0 }
+      let tokens = 0
+      let turns = 0
+      const changedPaths = new Set<string>()
       let promotion: SessionInput.Delivery | undefined = hasSteer ? "steer" : hasQueue ? "queue" : undefined
       let shouldRun = input.force || hasSteer || hasQueue
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
         while (needsContinuation) {
-          const result = yield* runTurn(input.sessionID, promotion, step)
+          const result = yield* runTurn(input.sessionID, promotion, step, limits)
+          tokens += result.tokens
+          turns += result.tokens === 0 && result.status === "budget_exhausted" ? 0 : 1
+          result.changedPaths.forEach((path) => changedPaths.add(path))
+          if (result.status === "budget_exhausted")
+            return {
+              status: "budget_exhausted" as const,
+              usage: { tokens, turns },
+              changedPaths: Array.from(changedPaths),
+            }
           needsContinuation = result.needsContinuation
           step = result.step + 1
           promotion = "steer"
@@ -405,6 +445,7 @@ const layer = Layer.effect(
         shouldRun = yield* SessionInput.hasPending(db, input.sessionID, "queue")
         promotion = shouldRun ? "queue" : undefined
       }
+      return { status: "completed" as const, usage: { tokens, turns }, changedPaths: Array.from(changedPaths) }
     })
 
     return Service.of({

@@ -266,10 +266,10 @@ describe("scheduler child Session V2 adapter", () => {
   })
 
   test("creates a deterministic child session and admits exactly one prompt at its assigned location", async () => {
-    const calls: { create: unknown[]; prompt: unknown[]; wake: string[]; interrupt: string[] } = {
+    const calls: { create: unknown[]; prompt: unknown[]; supervise: unknown[]; interrupt: string[] } = {
       create: [],
       prompt: [],
-      wake: [],
+      supervise: [],
       interrupt: [],
     }
     const adapter = createChildSessionAdapter({
@@ -278,7 +278,16 @@ describe("scheduler child Session V2 adapter", () => {
         prompt: (input) => Effect.sync(() => (calls.prompt.push(input), { accepted: true })),
       },
       execution: {
-        wake: (sessionID) => Effect.sync(() => void calls.wake.push(sessionID)),
+        supervise: (input) =>
+          Effect.sync(() => {
+            calls.supervise.push(input)
+            return {
+              status: "completed",
+              usage: { tokens: 1, turns: 1, elapsedMs: 1 },
+              artifactIds: [],
+              changedPaths: [],
+            }
+          }),
         interrupt: (sessionID) => Effect.sync(() => void calls.interrupt.push(sessionID)),
       },
     })
@@ -291,6 +300,8 @@ describe("scheduler child Session V2 adapter", () => {
       model: { providerID: "test", modelID: "model" },
       toolConstraints: ["read"],
       maxTurns: 2,
+      maxTokens: 100,
+      timeoutMs: 1_000,
       forkMode: "recent" as const,
       parent: { sessionID: "parent-session", messageID: "parent-message" },
     }
@@ -314,8 +325,8 @@ describe("scheduler child Session V2 adapter", () => {
     expect(calls.prompt).toEqual([
       { id: first.inputId, sessionID: first.sessionId, prompt: "inspect the change", resume: false },
     ])
-    expect(calls.wake).toEqual([first.sessionId])
-    expect(Object.keys(first)).toEqual(["sessionId", "inputId"])
+    expect(calls.supervise).toEqual([{ sessionID: first.sessionId, maxTurns: 2, maxTokens: 100, timeoutMs: 1_000 }])
+    expect(Object.keys(first)).toEqual(["sessionId", "inputId", "terminal"])
   })
 
   test("delegates cancellation exactly once to Session execution interrupt", async () => {
@@ -326,7 +337,13 @@ describe("scheduler child Session V2 adapter", () => {
         prompt: () => Effect.succeed({ accepted: true }),
       },
       execution: {
-        wake: () => Effect.void,
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+            artifactIds: [],
+            changedPaths: [],
+          }),
         interrupt: (sessionID) => Effect.sync(() => void interrupted.push(sessionID)),
       },
     })
@@ -339,6 +356,9 @@ describe("scheduler child Session V2 adapter", () => {
         agent: "build",
         model: { providerID: "test", modelID: "model" },
         toolConstraints: [],
+        maxTurns: 1,
+        maxTokens: 100,
+        timeoutMs: 1_000,
         forkMode: "none",
         parent: { sessionID: "parent-session", messageID: "parent-message" },
       }),
@@ -352,6 +372,33 @@ describe("scheduler child Session V2 adapter", () => {
 })
 
 describe("durable task scheduler adapter", () => {
+  test("fails closed before scheduling when any execution cap is absent", async () => {
+    const adapter = createTaskSchedulerAdapter({
+      scheduler: createScheduler(new FakeSidecar()),
+      worktree: undefined as never,
+      child: undefined as never,
+    })
+
+    await expect(
+      Effect.runPromise(
+        adapter.schedule({
+          brief: "work",
+          description: "work",
+          agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
+          forkMode: "none",
+          budget: { maxTurns: 1, maxTokens: 100 },
+          background: false,
+          parent: {
+            rootId: "ignored",
+            taskId: "ignored",
+            sessionID: "ses_parent" as never,
+            messageID: "msg_parent" as never,
+          },
+        }),
+      ),
+    ).rejects.toThrow("maxTokens, maxTurns, and maxTimeMs")
+  })
+
   test("commits a deterministic root and child lineage once before starting its isolated child session", async () => {
     const sidecar = new FakeSidecar()
     const created: unknown[] = []
@@ -375,7 +422,16 @@ describe("durable task scheduler adapter", () => {
         create: (input) => Effect.sync(() => (created.push(input), { id: input.id })),
         prompt: () => Effect.succeed({}),
       },
-      execution: { wake: () => Effect.void, interrupt: () => Effect.succeed({ observed: true }) },
+      execution: {
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+            artifactIds: [],
+            changedPaths: [],
+          }),
+        interrupt: () => Effect.succeed({ observed: true }),
+      },
     })
     const adapter = createTaskSchedulerAdapter({
       scheduler: createScheduler(sidecar),
@@ -387,7 +443,7 @@ describe("durable task scheduler adapter", () => {
       description: "fix scheduler",
       agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: ["read", "write"] },
       forkMode: "recent" as const,
-      budget: { maxTurns: 4, maxTokens: 1_000 },
+      budget: { maxTurns: 4, maxTokens: 1_000, maxTimeMs: 1_000 },
       background: false,
       parent: {
         rootId: "ignored",
@@ -457,7 +513,16 @@ describe("durable task scheduler adapter", () => {
         create: (input) => Effect.sync(() => (created.push(input), { id: input.id })),
         prompt: () => Effect.succeed({}),
       },
-      execution: { wake: () => Effect.void, interrupt: () => Effect.void },
+      execution: {
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+            artifactIds: [],
+            changedPaths: [],
+          }),
+        interrupt: () => Effect.void,
+      },
     })
     const adapter = createTaskSchedulerAdapter({
       scheduler: createScheduler(sidecar),
@@ -472,7 +537,7 @@ describe("durable task scheduler adapter", () => {
           description: "work",
           agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
           forkMode: "none",
-          budget: { maxTurns: 1, maxTokens: 1_000 },
+          budget: { maxTurns: 1, maxTokens: 1_000, maxTimeMs: 1_000 },
           background: false,
           parent: {
             rootId: "ignored",
@@ -508,7 +573,16 @@ describe("durable task scheduler adapter", () => {
     )
     const child = createChildSessionAdapter({
       session: { create: (input) => Effect.succeed({ id: input.id }), prompt: () => Effect.succeed({}) },
-      execution: { wake: () => Effect.void, interrupt: () => Effect.void },
+      execution: {
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+            artifactIds: [],
+            changedPaths: [],
+          }),
+        interrupt: () => Effect.void,
+      },
     })
     const adapter = createTaskSchedulerAdapter({
       scheduler: createScheduler(sidecar),
@@ -521,7 +595,7 @@ describe("durable task scheduler adapter", () => {
         description: "work",
         agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
         forkMode: "none",
-        budget: { maxTurns: 1, maxTokens: 1_000 },
+        budget: { maxTurns: 1, maxTokens: 1_000, maxTimeMs: 1_000 },
         background: false,
         parent: {
           rootId: "ignored",
