@@ -41,6 +41,7 @@ const agentKeys = new Set([
   "steps",
   "disabled",
   "permissions",
+  "permissionProfile",
 ])
 
 export const Plugin = define({
@@ -71,6 +72,9 @@ export const Plugin = define({
           documents.flatMap((document) => document.info.permissions ?? []),
           global.home,
         )
+        const profiles = documents
+          .toReversed()
+          .flatMap((document) => Object.values(document.info.permissionProfiles ?? {}))
         const configuredDefault = Config.latest(documents, "default_agent")
         if (configuredDefault !== undefined) draft.default(AgentV2.ID.make(configuredDefault))
         for (const current of draft.list()) {
@@ -107,6 +111,9 @@ export const Plugin = define({
               if (item.steps !== undefined) agent.steps = item.steps
               if (item.permissions !== undefined) {
                 agent.permissions.push(...expandPermissions(item.permissions, global.home))
+              }
+              if (item.permissionProfile !== undefined) {
+                Object.assign(agent, { permissionProfile: PermissionV2.resolveProfile(item.permissionProfile, profiles) })
               }
             })
           }

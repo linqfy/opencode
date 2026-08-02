@@ -785,6 +785,22 @@ Ordered permissions`,
   }),
 )
 
+it.instance("agent markdown preserves named permission profile selection", () =>
+  Effect.gen(function* () {
+    const test = yield* TestInstance
+    yield* FSUtil.use.writeWithDirs(
+      path.join(test.directory, ".opencode", "agent", "restricted.md"),
+      `---
+permission_profile: restricted
+---
+Restricted agent`,
+    )
+
+    const config = yield* Config.use.get()
+    expect(config.agent?.restricted?.permission_profile).toBe("restricted")
+  }),
+)
+
 it.instance("loads agents from .opencode/agents (plural)", () =>
   Effect.gen(function* () {
     const test = yield* TestInstance

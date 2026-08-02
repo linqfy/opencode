@@ -28,6 +28,7 @@ export const Info = Schema.Struct({
   color: Color.pipe(optional),
   steps: PositiveInt.pipe(optional),
   permissions: Permission.Ruleset,
+  permissionProfile: Permission.Profile.pipe(optional),
 })
   .annotate({ identifier: "AgentV2.Info" })
   .pipe(

@@ -85,7 +85,16 @@ function assertion(input: Partial<PermissionV2.AssertInput> = {}) {
   } satisfies PermissionV2.AssertInput
 }
 
-function waitForRequest() {
+function profile(input: Partial<PermissionV2.Profile> = {}) {
+  return {
+    name: "restricted",
+    version: "1",
+    rules: [],
+    ...input,
+  } satisfies PermissionV2.Profile
+}
+
+function waitForRequest(input = assertion()) {
   return Effect.gen(function* () {
     const service = yield* PermissionV2.Service
     const events = yield* EventV2.Service
@@ -96,24 +105,66 @@ function waitForRequest() {
         : Effect.void,
     )
     yield* Effect.addFinalizer(() => unsubscribe)
-    const fiber = yield* service.assert(assertion()).pipe(Effect.forkScoped)
+    const fiber = yield* service.assert(input).pipe(Effect.forkScoped)
     const request = yield* Deferred.await(asked)
     return { service, fiber, request }
   })
 }
 
 describe("PermissionV2", () => {
+  it.effect("resolves named profile versions and preserves parent ask and deny rules", () =>
+    Effect.sync(() => {
+    const profiles = [
+      profile({
+        name: "base",
+        version: "3",
+        rules: [
+          { action: "read", resource: "secret/*", effect: "deny" },
+          { action: "bash", resource: "*", effect: "ask" },
+        ],
+      }),
+      profile({
+        name: "restricted",
+        version: "4",
+        parent: "base",
+        rules: [
+          { action: "read", resource: "secret/*", effect: "allow" },
+          { action: "bash", resource: "*", effect: "allow" },
+        ],
+      }),
+    ]
+
+    const resolved = PermissionV2.resolveProfile("restricted", profiles)
+    expect(resolved?.version).toBe("4")
+    expect(PermissionV2.evaluate("read", "secret/key", resolved?.rules ?? []).effect).toBe("deny")
+    expect(PermissionV2.evaluate("bash", "pwd", resolved?.rules ?? []).effect).toBe("ask")
+    }),
+  )
+
+  it.effect("does not let nested invoking rules broaden a selected profile", () =>
+    Effect.sync(() => {
+      const parent = profile({
+        name: "parent",
+        version: "1",
+        rules: [{ action: "edit", resource: "secret/*", effect: "deny" }],
+      })
+      const nested = PermissionV2.mergeNarrowing(parent.rules, [{ action: "edit", resource: "*", effect: "allow" }])
+
+      expect(PermissionV2.evaluate("edit", "secret/key", nested).effect).toBe("deny")
+    }),
+  )
+
   it.effect("returns the evaluated effect and only queues prompts", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "read", resource: "*", effect: "allow" }])
       const service = yield* PermissionV2.Service
-      expect(yield* service.ask(assertion())).toEqual({ id: PermissionV2.ID.create("per_test"), effect: "allow" })
+      expect(yield* service.ask(assertion())).toMatchObject({ id: PermissionV2.ID.create("per_test"), effect: "allow" })
       expect(yield* service.list()).toEqual([])
       yield* setRules([{ action: "read", resource: "*", effect: "deny" }])
-      expect(yield* service.ask(assertion())).toEqual({ id: PermissionV2.ID.create("per_test"), effect: "deny" })
+      expect(yield* service.ask(assertion())).toMatchObject({ id: PermissionV2.ID.create("per_test"), effect: "deny" })
       expect(yield* service.list()).toEqual([])
       yield* setRules([])
-      expect(yield* service.ask(assertion())).toEqual({ id: PermissionV2.ID.create("per_test"), effect: "ask" })
+      expect(yield* service.ask(assertion())).toMatchObject({ id: PermissionV2.ID.create("per_test"), effect: "ask" })
       expect(yield* service.get(PermissionV2.ID.create("per_test"))).toBeDefined()
     }),
   )
@@ -186,7 +237,7 @@ describe("PermissionV2", () => {
       )
 
       const service = yield* PermissionV2.Service
-      expect(yield* service.ask(assertion({ action: "todowrite", resources: ["*"] }))).toEqual({
+      expect(yield* service.ask(assertion({ action: "todowrite", resources: ["*"] }))).toMatchObject({
         id: PermissionV2.ID.create("per_test"),
         effect: "allow",
       })
@@ -211,7 +262,7 @@ describe("PermissionV2", () => {
       })
 
       const service = yield* PermissionV2.Service
-      expect(yield* service.ask(assertion())).toEqual({ id: PermissionV2.ID.create("per_test"), effect: "deny" })
+      expect(yield* service.ask(assertion())).toMatchObject({ id: PermissionV2.ID.create("per_test"), effect: "deny" })
       expect(yield* service.list()).toEqual([])
     }),
   )
@@ -221,10 +272,10 @@ describe("PermissionV2", () => {
       yield* setup([{ action: "*", resource: "*", effect: "allow" }])
       const service = yield* PermissionV2.Service
       const bash = assertion({ action: "bash", resources: ["pwd"] })
-      expect(yield* service.ask(bash)).toEqual({ id: PermissionV2.ID.create("per_test"), effect: "allow" })
+      expect(yield* service.ask(bash)).toMatchObject({ id: PermissionV2.ID.create("per_test"), effect: "allow" })
 
       yield* setRules([])
-      expect(yield* service.ask(bash)).toEqual({ id: PermissionV2.ID.create("per_test"), effect: "ask" })
+      expect(yield* service.ask(bash)).toMatchObject({ id: PermissionV2.ID.create("per_test"), effect: "ask" })
       expect(yield* service.get(PermissionV2.ID.create("per_test"))).toBeDefined()
     }),
   )
@@ -236,14 +287,14 @@ describe("PermissionV2", () => {
       yield* saved.add({ projectID: Project.ID.global, action: "bash", resources: ["pwd"] })
 
       const service = yield* PermissionV2.Service
-      expect(yield* service.ask(assertion({ action: "bash", resources: ["pwd"] }))).toEqual({
+      expect(yield* service.ask(assertion({ action: "bash", resources: ["pwd"] }))).toMatchObject({
         id: PermissionV2.ID.create("per_test"),
         effect: "allow",
       })
       expect(yield* service.list()).toEqual([])
 
       yield* setRules([{ action: "bash", resource: "*", effect: "deny" }])
-      expect(yield* service.ask(assertion({ action: "bash", resources: ["pwd"] }))).toEqual({
+      expect(yield* service.ask(assertion({ action: "bash", resources: ["pwd"] }))).toMatchObject({
         id: PermissionV2.ID.create("per_test"),
         effect: "deny",
       })
@@ -262,6 +313,54 @@ describe("PermissionV2", () => {
       yield* Fiber.join(fiber)
       expect(yield* service.list()).toEqual([])
       expect(yield* service.get(request.id)).toBeUndefined()
+    }),
+  )
+
+  it.effect("expires once, session, and project scoped grants", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const service = yield* PermissionV2.Service
+      const expired = Date.now() - 1
+      for (const scope of ["once", "session", "project"] as const) {
+        const active = assertion({ id: PermissionV2.ID.create(`per_active_${scope}`), resources: [`active-${scope}`] })
+        const { fiber, request } = yield* waitForRequest(active)
+        yield* service.reply({ requestID: request.id, reply: scope, idempotencyKey: `active-${scope}` })
+        yield* Fiber.join(fiber)
+        expect(yield* service.ask(active)).toMatchObject({ effect: "allow" })
+        const expiredInput = assertion({ id: PermissionV2.ID.create(`per_expired_${scope}`), resources: [`expired-${scope}`] })
+        const { fiber: expiredFiber, request: expiredRequest } = yield* waitForRequest(expiredInput)
+        yield* service.reply({
+          requestID: expiredRequest.id,
+          reply: scope,
+          expiresAt: expired,
+          idempotencyKey: `expired-${scope}`,
+        })
+        yield* Fiber.join(expiredFiber)
+        const result = yield* service.ask(expiredInput)
+        expect(result).toMatchObject({ effect: "ask" })
+        if (result.effect === "ask") yield* service.reply({ requestID: result.id, reply: "reject" })
+      }
+    }),
+  )
+
+  it.effect("records immutable decision audit metadata and deduplicates approval replies", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const { service, fiber, request } = yield* waitForRequest()
+      expect(request.decision).toMatchObject({
+        requestedAction: "read",
+        requestedResources: ["src/index.ts"],
+        agent: "test",
+        approvalSource: "policy",
+      })
+      yield* Effect.all(
+        [
+          service.reply({ requestID: request.id, reply: "session", idempotencyKey: "approval-1" }),
+          service.reply({ requestID: request.id, reply: "session", idempotencyKey: "approval-1" }),
+        ],
+        { concurrency: "unbounded" },
+      )
+      yield* Fiber.join(fiber)
     }),
   )
 

@@ -31,26 +31,6 @@ const RequestFields = {
   source: Source.pipe(optional),
 }
 
-export const Request = Schema.Struct({
-  id: ID,
-  ...RequestFields,
-}).annotate({ identifier: "PermissionV2.Request" })
-export interface Request extends Schema.Schema.Type<typeof Request> {}
-
-export const Reply = Schema.Literals(["once", "always", "reject"]).annotate({ identifier: "PermissionV2.Reply" })
-export type Reply = typeof Reply.Type
-
-const Asked = define({ type: "permission.v2.asked", schema: Request.fields })
-const Replied = define({
-  type: "permission.v2.replied",
-  schema: {
-    sessionID: SessionID,
-    requestID: ID,
-    reply: Reply,
-  },
-})
-export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }
-
 export const Effect = Schema.Literals(["allow", "deny", "ask"]).annotate({ identifier: "PermissionV2.Effect" })
 export type Effect = typeof Effect.Type
 
@@ -63,3 +43,66 @@ export const Rule = Schema.Struct({
 
 export const Ruleset = Schema.Array(Rule).annotate({ identifier: "PermissionV2.Ruleset" })
 export type Ruleset = typeof Ruleset.Type
+
+export const Profile = Schema.Struct({
+  name: Schema.String,
+  version: Schema.String,
+  parent: Schema.String.pipe(optional),
+  rules: Ruleset,
+  sandboxProfile: Schema.String.pipe(optional),
+}).annotate({ identifier: "PermissionV2.Profile" })
+export interface Profile extends Schema.Schema.Type<typeof Profile> {}
+
+export const GrantScope = Schema.Literals(["once", "session", "project"]).annotate({
+  identifier: "PermissionV2.GrantScope",
+})
+export type GrantScope = typeof GrantScope.Type
+
+export const Grant = Schema.Struct({
+  scope: GrantScope,
+  action: Schema.String,
+  resources: Schema.Array(Schema.String),
+  sessionID: SessionID.pipe(optional),
+  expiresAt: Schema.Number.pipe(optional),
+  idempotencyKey: Schema.String.pipe(optional),
+}).annotate({ identifier: "PermissionV2.Grant" })
+export interface Grant extends Schema.Schema.Type<typeof Grant> {}
+
+export const Decision = Schema.Struct({
+  matchedRule: Rule.pipe(optional),
+  profile: Schema.String.pipe(optional),
+  profileVersion: Schema.String.pipe(optional),
+  requestedAction: Schema.String,
+  requestedResources: Schema.Array(Schema.String),
+  agent: Schema.String.pipe(optional),
+  turn: Schema.String.pipe(optional),
+  approvalSource: Schema.Literals(["policy", "grant", "user"]),
+  sandboxProfile: Schema.String.pipe(optional),
+  grantScope: GrantScope.pipe(optional),
+  expiresAt: Schema.Number.pipe(optional),
+  idempotencyKey: Schema.String.pipe(optional),
+}).annotate({ identifier: "PermissionV2.Decision" })
+export interface Decision extends Schema.Schema.Type<typeof Decision> {}
+
+export const Request = Schema.Struct({
+  id: ID,
+  ...RequestFields,
+  decision: Decision.pipe(optional),
+}).annotate({ identifier: "PermissionV2.Request" })
+export interface Request extends Schema.Schema.Type<typeof Request> {}
+
+export const Reply = Schema.Literals(["once", "session", "project", "always", "reject"]).annotate({
+  identifier: "PermissionV2.Reply",
+})
+export type Reply = typeof Reply.Type
+
+const Asked = define({ type: "permission.v2.asked", schema: Request.fields })
+const Replied = define({
+  type: "permission.v2.replied",
+  schema: {
+    sessionID: SessionID,
+    requestID: ID,
+    reply: Reply,
+  },
+})
+export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }
