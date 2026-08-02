@@ -66,6 +66,7 @@ pub struct TaskRecord {
     pub reserved_child_pool: u64,
     pub reserved_synthesis: u64,
     pub budget_used: u64,
+    pub budget_reclaimed: u64,
     pub state: String,
     pub dependencies: Vec<String>,
     pub worktree_id: Option<String>,
@@ -158,7 +159,7 @@ impl ProjectionStore {
                    root_id TEXT NOT NULL, task_id TEXT NOT NULL, parent_task_id TEXT,
                   depth INTEGER NOT NULL, state_changing INTEGER NOT NULL, budget INTEGER NOT NULL,
                   reserved_parent INTEGER NOT NULL DEFAULT 0, reserved_child_pool INTEGER NOT NULL DEFAULT 0,
-                  reserved_synthesis INTEGER NOT NULL DEFAULT 0, budget_used INTEGER NOT NULL DEFAULT 0,
+                   reserved_synthesis INTEGER NOT NULL DEFAULT 0, budget_used INTEGER NOT NULL DEFAULT 0, budget_reclaimed INTEGER NOT NULL DEFAULT 0,
                    state TEXT NOT NULL, cancellation_reason TEXT, cancellation_observed INTEGER NOT NULL DEFAULT 0,
                    PRIMARY KEY(root_id, task_id)
               );
@@ -227,6 +228,7 @@ impl ProjectionStore {
             "reserved_child_pool",
             "reserved_synthesis",
             "budget_used",
+            "budget_reclaimed",
         ] {
             if !task_columns.iter().any(|existing| existing == column) {
                 conn.execute(
@@ -391,6 +393,17 @@ impl ProjectionStore {
             } => {
                 self.conn.execute(
                     "UPDATE tasks SET budget_used = budget_used + ?3 WHERE root_id = ?1 AND task_id = ?2",
+                    params![root_id, task_id, amount],
+                )?;
+            }
+            EventKind::TaskBudgetReclaimed {
+                root_id,
+                task_id,
+                amount,
+                ..
+            } => {
+                self.conn.execute(
+                    "UPDATE tasks SET budget_reclaimed = budget_reclaimed + ?3 WHERE root_id = ?1 AND task_id = ?2",
                     params![root_id, task_id, amount],
                 )?;
             }
@@ -710,7 +723,7 @@ impl ProjectionStore {
         root_id: &str,
         limit: u64,
     ) -> Result<Vec<TaskRecord>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare("SELECT tasks.root_id, tasks.task_id, tasks.parent_task_id, tasks.depth, tasks.state_changing, tasks.budget, tasks.reserved_parent, tasks.reserved_child_pool, tasks.reserved_synthesis, tasks.budget_used, tasks.state, worktree_leases.worktree_id FROM tasks LEFT JOIN worktree_leases ON worktree_leases.root_id = tasks.root_id AND worktree_leases.task_id = tasks.task_id WHERE tasks.root_id = ?1 ORDER BY tasks.task_id ASC LIMIT ?2")?;
+        let mut stmt = self.conn.prepare("SELECT tasks.root_id, tasks.task_id, tasks.parent_task_id, tasks.depth, tasks.state_changing, tasks.budget, tasks.reserved_parent, tasks.reserved_child_pool, tasks.reserved_synthesis, tasks.budget_used, tasks.budget_reclaimed, tasks.state, worktree_leases.worktree_id FROM tasks LEFT JOIN worktree_leases ON worktree_leases.root_id = tasks.root_id AND worktree_leases.task_id = tasks.task_id WHERE tasks.root_id = ?1 ORDER BY tasks.task_id ASC LIMIT ?2")?;
         let rows = stmt.query_map(params![root_id, limit.min(200)], |row| {
             Ok(TaskRecord {
                 root_id: row.get(0)?,
@@ -723,9 +736,10 @@ impl ProjectionStore {
                 reserved_child_pool: row.get(7)?,
                 reserved_synthesis: row.get(8)?,
                 budget_used: row.get(9)?,
-                state: row.get(10)?,
+                budget_reclaimed: row.get(10)?,
+                state: row.get(11)?,
                 dependencies: Vec::new(),
-                worktree_id: row.get(11)?,
+                worktree_id: row.get(12)?,
             })
         })?;
         let mut tasks = rows.collect::<Result<Vec<_>, _>>()?;

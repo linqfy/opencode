@@ -50,6 +50,7 @@ export type TaskRecord = {
   reserved_child_pool: number
   reserved_synthesis: number
   budget_used: number
+  budget_reclaimed: number
   state: string
   dependencies: string[]
   worktree_id?: string

@@ -9,6 +9,7 @@ export interface TaskRecord {
   readonly reserved_child_pool: number
   readonly reserved_synthesis: number
   readonly budget_used: number
+  readonly budget_reclaimed?: number
   readonly state: string
   readonly dependencies: readonly string[]
   readonly worktree_id?: string

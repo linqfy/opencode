@@ -1804,6 +1804,11 @@ mod tests {
         )
         .error
         .is_none());
+        assert_eq!(
+            state.projections.list_tasks("root", 10).unwrap().into_iter().find(|task| task.task_id == "child-a").unwrap().budget_reclaimed,
+            10
+        );
+        state.projections.rebuild(&state.journal_dir.clone(), "ses_1").unwrap();
         assert!(
             commit(&mut state, "child-b-after-reclaim", spawned("child-b"))
                 .error

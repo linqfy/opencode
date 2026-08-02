@@ -38,7 +38,7 @@ export interface ChildSessionBoundary {
     maxTurns?: number
     forkMode: "none" | "recent" | "full"
     parent: { readonly sessionID: string; readonly messageID: string }
-  }) => Effect.Effect<{ id: string }>
+  }) => Effect.Effect<{ id: string; close?: Effect.Effect<void, never, never> }>
   readonly prompt: (input: { id: string; sessionID: string; prompt: string; resume: false }) => Effect.Effect<unknown>
 }
 
@@ -102,8 +102,9 @@ export function createWorktreeLeaseAdapter(
     }
     pending.add(key)
 
+    let created = false
+    const info = yield* worktree.makeWorktreeInfo({ name: worktreeName(input.rootId, input.taskId) })
     return yield* Effect.gen(function* () {
-      const info = yield* worktree.makeWorktreeInfo({ name: worktreeName(input.rootId, input.taskId) })
       const ready = yield* Deferred.make<void, Error>()
       const stopWatching = watchReady(info, (result) => Deferred.doneUnsafe(ready, result))
       const stop = (() => {
@@ -116,6 +117,7 @@ export function createWorktreeLeaseAdapter(
       })()
       yield* Effect.addFinalizer(() => Effect.sync(stop))
       yield* worktree.createFromInfo(info)
+      created = true
       yield* Deferred.await(ready)
       stop()
       const lease: WorktreeLease = {
@@ -129,7 +131,13 @@ export function createWorktreeLeaseAdapter(
       released.delete(key)
       leases.set(key, lease)
       return lease
-    }).pipe(Effect.onExit(() => Effect.sync(() => pending.delete(key))))
+    }).pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => pending.delete(key)).pipe(
+          Effect.andThen(() => (Exit.isFailure(exit) && created ? worktree.remove({ directory: info.directory }).pipe(Effect.asVoid) : Effect.void)),
+        ),
+      ),
+    )
   })
 
   const release = Effect.fn("SchedulerWorktree.release")(function* (
@@ -177,7 +185,7 @@ export function createChildSessionAdapter(input: {
   readonly session: ChildSessionBoundary
   readonly execution: ChildExecutionBoundary
 }) {
-  const started = new Map<string, ChildSessionHandle>()
+  const started = new Map<string, ChildSessionHandle & { readonly close?: Effect.Effect<void, never, never> }>()
   const finished = new Map<string, ChildExecutionResult>()
   const starting = new Set<string>()
   const cancelled = new Set<string>()
@@ -194,8 +202,8 @@ export function createChildSessionAdapter(input: {
     return yield* Effect.gen(function* () {
       const sessionId = childSessionID(child.rootId, child.taskId)
       const inputId = childInputID(child.rootId, child.taskId)
-      if (cancelled.has(key)) return { sessionId, inputId } satisfies ChildSessionHandle
-      yield* input.session.create({
+      if (cancelled.has(key)) return { sessionId, inputId, close: undefined } satisfies ChildSessionHandle & { readonly close?: Effect.Effect<void, never, never> }
+      const created = yield* input.session.create({
         id: sessionId,
         location: child.location,
         agent: child.agent,
@@ -207,7 +215,7 @@ export function createChildSessionAdapter(input: {
         parent: child.parent,
       })
       yield* input.session.prompt({ id: inputId, sessionID: sessionId, prompt: child.prompt, resume: false })
-      const result = { sessionId, inputId } satisfies ChildSessionHandle
+      const result = { sessionId, inputId, close: created.close } satisfies ChildSessionHandle & { readonly close?: Effect.Effect<void, never, never> }
       started.set(key, result)
       return result
     }).pipe(Effect.onExit(() => Effect.sync(() => starting.delete(key))))
@@ -228,6 +236,7 @@ export function createChildSessionAdapter(input: {
           changedPaths: [],
         },
       } satisfies ChildExecutionResult
+      yield* (startedChild.close ?? Effect.void)
       finished.set(key, result)
       return result
     }
@@ -236,10 +245,10 @@ export function createChildSessionAdapter(input: {
       maxTokens: child.maxTokens,
       maxTurns: child.maxTurns,
       timeoutMs: child.timeoutMs,
-    })
+    }).pipe(Effect.ensuring(startedChild.close ?? Effect.void))
     const result = cancelled.has(key)
-      ? ({ ...startedChild, terminal: { ...terminal, status: "cancelled" } } satisfies ChildExecutionResult)
-      : ({ ...startedChild, terminal } satisfies ChildExecutionResult)
+      ? ({ sessionId: startedChild.sessionId, inputId: startedChild.inputId, terminal: { ...terminal, status: "cancelled" } } satisfies ChildExecutionResult)
+      : ({ sessionId: startedChild.sessionId, inputId: startedChild.inputId, terminal } satisfies ChildExecutionResult)
     finished.set(key, result)
     return result
   })

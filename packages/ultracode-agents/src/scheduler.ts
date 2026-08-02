@@ -225,7 +225,7 @@ function validateSpawn(input: SpawnInput, tasks: readonly TaskRecord[]) {
     if (tasks.filter((task) => task.parent_task_id === input.task.parentId).length >= MAX_CHILDREN) throw new Error("max_children_exceeded")
     const childBudget = tasks
       .filter((task) => task.parent_task_id === input.task.parentId)
-      .reduce((total, task) => total + task.budget, input.budget.total)
+      .reduce((total, task) => total + task.budget - (task.budget_reclaimed ?? 0), input.budget.total)
     if (childBudget > parent.reserved_child_pool - parent.budget_used) throw new Error("child_budget_exhausted")
   }
   if (!input.task.dependencyIds.every((dependency) => tasks.some((task) => task.task_id === dependency))) {

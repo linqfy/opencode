@@ -73,6 +73,7 @@ class FakeSidecar implements SchedulerEventClient {
         reserved_child_pool: 10_000,
         reserved_synthesis: 100,
         budget_used: 0,
+        budget_reclaimed: 0,
         state: "pending",
         dependencies: [],
       })
@@ -88,6 +89,10 @@ class FakeSidecar implements SchedulerEventClient {
     if (kind.kind === "task-budget-used") {
       const task = this.tasks.find((item) => item.root_id === kind.data.root_id && item.task_id === kind.data.task_id)
       if (task) (task as { budget_used: number }).budget_used += kind.data.amount as number
+    }
+    if (kind.kind === "task-budget-reclaimed") {
+      const task = this.tasks.find((item) => item.root_id === kind.data.root_id && item.task_id === kind.data.task_id)
+      if (task) (task as { budget_reclaimed: number }).budget_reclaimed += kind.data.amount as number
     }
     if (kind.kind === "task-deliverable-committed") {
       this.deliverables.push({
@@ -202,6 +207,40 @@ describe("scheduler worktree lease adapter", () => {
       Effect.runPromise(Effect.scoped(adapter.acquire({ rootId: "root", taskId: "task", stateChanging: true }))),
     ).rejects.toThrow("bootstrap failed")
     expect(GlobalBus.listenerCount("event")).toBe(listeners)
+  })
+
+  test("removes a physically created worktree after readiness fails so its deterministic name can be retried", async () => {
+    const removed: string[] = []
+    let created = 0
+    let failReady: (() => void) | undefined
+    let resolveReady: (() => void) | undefined
+    const adapter = createWorktreeLeaseAdapter(
+      { directory: "/parent" },
+      {
+        makeWorktreeInfo: () =>
+          Effect.succeed({ name: "scheduler-726f6f74-7461736b", branch: "opencode/child", directory: "/child" }),
+        createFromInfo: () => Effect.sync(() => {
+          created++
+          if (created === 1) failReady?.()
+          if (created === 2) resolveReady?.()
+        }),
+        create: () => Effect.die("unexpected"),
+        list: () => Effect.succeed([]),
+        remove: ({ directory }) => Effect.sync(() => (removed.push(directory), true)),
+        reset: () => Effect.succeed(true),
+      },
+      (_, resolve) => {
+        failReady = () => resolve(Effect.fail(new Error("bootstrap failed")))
+        resolveReady = () => resolve(Effect.void)
+        return () => {}
+      },
+    )
+    const input = { rootId: "root", taskId: "task", stateChanging: true }
+
+    await expect(Effect.runPromise(Effect.scoped(adapter.acquire(input)))).rejects.toThrow("bootstrap failed")
+    expect(removed).toEqual(["/child"])
+    await Effect.runPromise(Effect.scoped(adapter.acquire(input)))
+    expect(created).toBe(2)
   })
 
   test("does not permit a read-only scheduler child", async () => {
@@ -365,6 +404,36 @@ describe("scheduler child Session V2 adapter", () => {
     ])
     expect(calls.supervise).toEqual([{ sessionID: first.sessionId, maxTurns: 2, maxTokens: 100, timeoutMs: 1_000 }])
     expect(Object.keys(first)).toEqual(["sessionId", "inputId", "terminal"])
+  })
+
+  test("keeps constrained child registration available until supervision reaches a terminal result", async () => {
+    let registered = false
+    let closed = false
+    const terminal = await Effect.runPromise(Deferred.make<SessionExecution.TerminalRunResult, never>())
+    const adapter = createChildSessionAdapter({
+      session: {
+        create: (input) =>
+          Effect.sync(() => {
+            registered = true
+            return { id: input.id, close: Effect.sync(() => void ((registered = false), (closed = true))) }
+          }),
+        prompt: () => Effect.succeed({}),
+      },
+      execution: {
+        supervise: () => Effect.sync(() => expect(registered).toBe(true)).pipe(Effect.andThen(Deferred.await(terminal))),
+        interrupt: () => Effect.void,
+      },
+    })
+    const input = {
+      rootId: "root", taskId: "child", location: { directory: "/assigned" }, prompt: "work", agent: "build",
+      model: { providerID: "test", modelID: "model" }, toolConstraints: ["read"], maxTurns: 1, maxTokens: 100,
+      timeoutMs: 1_000, forkMode: "none" as const, parent: { sessionID: "parent", messageID: "message" },
+    }
+    const running = Effect.runPromise(adapter.supervise(input))
+    await Effect.runPromise(Deferred.succeed(terminal, { status: "completed", usage: { tokens: 0, turns: 0, elapsedMs: 0 }, artifactIds: [], changedPaths: [] }))
+    await running
+    expect(closed).toBe(true)
+    expect(registered).toBe(false)
   })
 
   test("delegates cancellation exactly once to Session execution interrupt", async () => {

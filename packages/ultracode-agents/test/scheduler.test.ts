@@ -70,6 +70,7 @@ class FakeEventClient implements SchedulerEventClient {
         reserved_child_pool: 0,
         reserved_synthesis: 0,
         budget_used: 0,
+        budget_reclaimed: 0,
         state: "pending",
         dependencies: data.dependencies as string[],
       })
@@ -80,6 +81,7 @@ class FakeEventClient implements SchedulerEventClient {
       task.reserved_child_pool = data.child_pool as number
       task.reserved_synthesis = data.synthesis as number
     }
+    if (kind.kind === "task-budget-reclaimed") this.task(data.root_id as string, data.task_id as string).budget_reclaimed! += data.amount as number
     if (kind.kind === "task-state-changed") this.task(data.root_id as string, data.task_id as string).state = data.state as string
     if (kind.kind === "task-cancellation-requested") this.task(data.root_id as string, data.task_id as string).state = "cancelled"
     if (kind.kind === "mailbox-message-sent") {
@@ -146,6 +148,18 @@ describe("sidecar-backed scheduler", () => {
       expect.objectContaining({ key: "spawn-root", kind: expect.objectContaining({ kind: "task-spawned" }) }),
       expect.objectContaining({ key: "spawn-root:budget", kind: expect.objectContaining({ kind: "task-budget-reserved" }) }),
     ])
+  })
+
+  test("admits a new child from child-pool capacity reclaimed by a terminal sibling", async () => {
+    const client = new FakeEventClient()
+    const scheduler = createScheduler(client)
+    await scheduler.spawn(spawnInput({ budget: { total: 100, fixedCosts: 0 } }))
+    await scheduler.spawn(spawnInput({ key: "child-a", task: { ...spawnInput().task, taskId: "child-a", parentId: "root-task", depth: 1 }, budget: { total: 20, fixedCosts: 0 } }))
+    await scheduler.admit("root", "child-a", "admit-child-a")
+    await scheduler.commitDeliverable({ rootId: "root", taskId: "child-a", stateKey: "finish-child-a", deliverableKey: "deliver-child-a", status: "completed", manifest: { summary: "done", artifactIds: [], changedPaths: [] } })
+    await scheduler.reclaimChildBudget({ key: "reclaim-child-a", rootId: "root", taskId: "child-a", amount: 10 })
+
+    await expect(scheduler.spawn(spawnInput({ key: "child-b", task: { ...spawnInput().task, taskId: "child-b", parentId: "root-task", depth: 1 }, budget: { total: 20, fixedCosts: 0 } }))).resolves.toEqual({ rootId: "root", taskId: "child-b" })
   })
 
   test("rejects invalid child graph, dependencies, and budget before committing", async () => {

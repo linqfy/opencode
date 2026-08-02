@@ -1,5 +1,5 @@
 import path from "path"
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Exit, Layer, Scope } from "effect"
 import { EventsClient, type EventServiceConfig } from "@ultracode/events-client"
 import { createScheduler } from "@ultracode/agents"
 import { Global } from "@opencode-ai/core/global"
@@ -131,11 +131,12 @@ export const layer = Layer.unwrap(
         worktree,
         session: {
           create: (input) =>
-            Effect.context<never>().pipe(
-              Effect.flatMap((context) => {
+            Effect.gen(function* () {
+              const scope = yield* Scope.make()
+              const context = yield* Effect.context<never>()
                 const agents = Context.get(context as never, AgentV2.Service) as AgentV2.Interface
                 const agent = AgentV2.ID.make(`scheduler_${input.id}`)
-                return agents.transform((draft) => {
+                return yield* agents.transform((draft) => {
                   const source = draft.get(AgentV2.ID.make(input.agent)) ?? AgentV2.Info.empty(agent)
                   draft.update(agent, (value) => {
                     Object.assign(value, source, {
@@ -160,13 +161,14 @@ export const layer = Layer.unwrap(
                     model: input.model as never,
                   })
                   .pipe(
-                    Effect.map((value) => ({ id: value.id })),
+                    Effect.map((value) => ({ id: value.id, close: Scope.close(scope, Exit.void) })),
                     Effect.orDie,
                   ),
-                  ),
-                ).pipe(Effect.scoped)
-              }),
-            ),
+                ),
+                Effect.provideService(Scope.Scope, scope),
+                Effect.onExit((exit) => Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void),
+              )
+            }),
           prompt: (input) =>
             Effect.context<never>().pipe(
               Effect.flatMap((context) =>
