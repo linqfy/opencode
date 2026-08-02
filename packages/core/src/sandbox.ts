@@ -1,6 +1,7 @@
 export * as SandboxProcess from "./sandbox"
 
 import { Sandbox } from "@ultracode/sandbox"
+import { realpathSync } from "node:fs"
 import { Context, Layer } from "effect"
 import { makeGlobalNode } from "./effect/app-node"
 
@@ -18,6 +19,7 @@ const layer = Layer.succeed(
     plan: Sandbox.Broker.create({
       platform: process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux",
       wsl: process.env.WSL_DISTRO_NAME !== undefined || process.env.WSL_INTEROP !== undefined,
+      resolvePath: realpathSync.native,
     }).plan,
   }),
 )

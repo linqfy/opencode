@@ -65,6 +65,7 @@ export type BrokerOptions = {
   readonly wsl?: boolean
   readonly policy?: (request: LaunchRequest) => BackendDecision
   readonly containment?: (request: LaunchRequest) => BackendDecision
+  readonly resolvePath?: (path: string) => string
 }
 
 export type Interface = {
@@ -79,16 +80,17 @@ export const Broker = {
 
 function plan(request: LaunchRequest, options: BrokerOptions): Plan {
   if (request.authorization !== "allow") return denied("authorization-not-allowed")
+  const policy = options.policy?.(request)
+  if (policy?.outcome === "deny") return denied(policy.reason ?? "network-policy")
   if (request.profile.mode === "unconfined") return allowed(request, "unconfined")
   if (request.profile.windowsContainment !== "none" && options.platform !== "win32")
     return denied("containment-unsupported")
   if (options.wsl || !options.containment) return denied("containment-unsupported")
-  const policy = options.policy?.(request)
-  if (policy?.outcome === "deny") return denied(policy.reason ?? "network-policy")
   if (!isAllowedExecutable(request.executable, request.profile.allowedExecutables))
     return denied("executable-not-allowed")
-  if (!contains(request.cwd, request.profile.readRoots, options.platform)) return denied("cwd-outside-readable-roots")
-  if (!contains(request.cwd, request.profile.writableRoots, options.platform))
+  if (!contains(request.cwd, request.profile.readRoots, options.platform, options.resolvePath))
+    return denied("cwd-outside-readable-roots")
+  if (!contains(request.cwd, request.profile.writableRoots, options.platform, options.resolvePath))
     return denied("cwd-outside-writable-roots")
   const containment = options.containment(request)
   if (containment.outcome === "deny") return denied(containment.reason ?? "containment-unsupported")
@@ -114,14 +116,30 @@ function isAllowedExecutable(executable: string, allowed: ReadonlyArray<string>)
   return allowed.includes("*") || allowed.includes(executable)
 }
 
-function contains(candidate: string, roots: ReadonlyArray<string>, platform: Platform | undefined): boolean {
+function contains(
+  candidate: string,
+  roots: ReadonlyArray<string>,
+  platform: Platform | undefined,
+  resolvePath?: (path: string) => string,
+): boolean {
   if (roots.includes("*")) return true
   const api = platform === "win32" ? path.win32 : path.posix
-  const resolved = api.resolve(candidate)
+  const resolved = resolve(candidate, api, resolvePath)
+  if (!resolved) return false
   return roots.some((root) => {
-    const resolvedRoot = api.resolve(root)
+    const resolvedRoot = resolve(root, api, resolvePath)
+    if (!resolvedRoot) return false
     return resolved === resolvedRoot || resolved.startsWith(`${resolvedRoot}${api.sep}`)
   })
+}
+
+function resolve(candidate: string, api: typeof path.posix, resolvePath?: (path: string) => string) {
+  if (!resolvePath) return api.resolve(candidate)
+  try {
+    return resolvePath(candidate)
+  } catch {
+    return undefined
+  }
 }
 
 function filterEnvironment(
