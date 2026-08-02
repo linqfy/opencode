@@ -424,7 +424,7 @@ export function createTaskSchedulerAdapter(input: {
           const failure = Cause.squash(recovered.cause)
           const reason = failure instanceof Error ? failure : new Error(String(failure))
           const worktreeID = durable.worktree_id
-          if (!recovering || !worktreeID) return yield* Effect.fail(reason)
+          if (!recovering) return yield* Effect.fail(reason)
           const terminal = {
             status: "failed" as const,
             usage: { tokens: 0, turns: 0, elapsedMs: 0 },
@@ -453,14 +453,15 @@ export function createTaskSchedulerAdapter(input: {
               evidence,
             }),
           )
-          yield* Effect.promise(() =>
-            input.scheduler.releaseWorktree(
-              rootId,
-              taskId,
-              worktreeID,
-              `task:${rootId}:${taskId}:worktree-released`,
-            ),
-          )
+          if (worktreeID)
+            yield* Effect.promise(() =>
+              input.scheduler.releaseWorktree(
+                rootId,
+                taskId,
+                worktreeID,
+                `task:${rootId}:${taskId}:worktree-released`,
+              ),
+            )
           const handle = {
             rootId,
             taskId,
