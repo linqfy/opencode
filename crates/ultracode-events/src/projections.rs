@@ -68,6 +68,7 @@ pub struct TaskRecord {
     pub budget_used: u64,
     pub state: String,
     pub dependencies: Vec<String>,
+    pub worktree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -709,7 +710,7 @@ impl ProjectionStore {
         root_id: &str,
         limit: u64,
     ) -> Result<Vec<TaskRecord>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare("SELECT root_id, task_id, parent_task_id, depth, state_changing, budget, reserved_parent, reserved_child_pool, reserved_synthesis, budget_used, state FROM tasks WHERE root_id = ?1 ORDER BY task_id ASC LIMIT ?2")?;
+        let mut stmt = self.conn.prepare("SELECT tasks.root_id, tasks.task_id, tasks.parent_task_id, tasks.depth, tasks.state_changing, tasks.budget, tasks.reserved_parent, tasks.reserved_child_pool, tasks.reserved_synthesis, tasks.budget_used, tasks.state, worktree_leases.worktree_id FROM tasks LEFT JOIN worktree_leases ON worktree_leases.root_id = tasks.root_id AND worktree_leases.task_id = tasks.task_id WHERE tasks.root_id = ?1 ORDER BY tasks.task_id ASC LIMIT ?2")?;
         let rows = stmt.query_map(params![root_id, limit.min(200)], |row| {
             Ok(TaskRecord {
                 root_id: row.get(0)?,
@@ -724,6 +725,7 @@ impl ProjectionStore {
                 budget_used: row.get(9)?,
                 state: row.get(10)?,
                 dependencies: Vec::new(),
+                worktree_id: row.get(11)?,
             })
         })?;
         let mut tasks = rows.collect::<Result<Vec<_>, _>>()?;

@@ -174,10 +174,15 @@ const layer = Layer.effect(
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
       step: number,
-      limits: { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number } | undefined,
+      limits:
+        | { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number; inputFloor: number }
+        | undefined,
       recoverOverflow?: typeof compaction.compactAfterOverflow,
     ) {
-      if (limits && (limits.turns >= limits.maxTurns || limits.tokens >= limits.maxTokens))
+      if (
+        limits &&
+        (limits.turns >= limits.maxTurns || limits.tokens >= limits.maxTokens || limits.tokens + limits.inputFloor >= limits.maxTokens)
+      )
         return { status: "budget_exhausted" as const, needsContinuation: false, step, tokens: 0, changedPaths: [] }
       const session = yield* getSession(sessionID)
       if (session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID)
@@ -351,7 +356,10 @@ const layer = Layer.effect(
             return yield* Effect.failCause(settled.cause)
           const usage = publisher.stepSettlement()?.tokens
           const tokens = usage ? usage.input + usage.output + usage.reasoning + usage.cache.read + usage.cache.write : 0
-          if (limits) limits.tokens += tokens
+          if (limits) {
+            limits.tokens += tokens
+            limits.inputFloor = usage ? usage.input + usage.cache.read + usage.cache.write : 0
+          }
           return {
             status:
               limits && limits.tokens >= limits.maxTokens ? ("budget_exhausted" as const) : ("completed" as const),
@@ -367,7 +375,9 @@ const layer = Layer.effect(
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
       step: number,
-      limits: { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number } | undefined,
+      limits:
+        | { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number; inputFloor: number }
+        | undefined,
     ) => Effect.Effect<
       {
         readonly status: "completed" | "budget_exhausted"
@@ -417,7 +427,7 @@ const layer = Layer.effect(
       if (!input.force && !hasSteer && !hasQueue)
         return { status: "completed" as const, usage: { tokens: 0, turns: 0 }, changedPaths: [] }
       yield* failInterruptedTools(input.sessionID)
-      const limits = input.limits && { ...input.limits, tokens: 0, turns: 0 }
+      const limits = input.limits && { ...input.limits, tokens: 0, turns: 0, inputFloor: 0 }
       let tokens = 0
       let turns = 0
       const changedPaths = new Set<string>()

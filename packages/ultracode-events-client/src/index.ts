@@ -52,6 +52,7 @@ export type TaskRecord = {
   budget_used: number
   state: string
   dependencies: string[]
+  worktree_id?: string
 }
 export type MailboxMessage = {
   root_id: string

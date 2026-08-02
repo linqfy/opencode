@@ -529,9 +529,70 @@ const verifyPartialFlushOnFailure = (kind: FragmentKind) =>
   })
 
 describe("supervised Session V2 execution", () => {
+  it.effect("stops before a continuation whose observed input floor cannot fit the aggregate token cap", () =>
+    Effect.gen(function* () {
+      yield* setup
+      requests.length = 0
+      const session = yield* SessionV2.Service
+      const execution = yield* SessionExecution.Service
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-input-floor", name: "echo", input: { text: "first" } }),
+          LLMEvent.stepFinish({
+            index: 0,
+            reason: "tool-calls",
+            usage: { inputTokens: 4, nonCachedInputTokens: 4, outputTokens: 0, totalTokens: 4 },
+          }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-input-floor-second", ["must not run"]).completeEvents,
+      ]
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "work" }), resume: false })
+
+      const result = yield* execution.supervise({ sessionID, maxTokens: 5, maxTurns: 2, timeoutMs: 1_000 })
+
+      expect(result.status).toBe("budget_exhausted")
+      expect(result.usage.tokens).toBe(4)
+      expect(result.usage.turns).toBe(1)
+      expect(requests).toHaveLength(1)
+    }),
+  )
+
+  it.effect("accounts for input-only provider usage before another supervised attempt", () =>
+    Effect.gen(function* () {
+      yield* setup
+      requests.length = 0
+      const session = yield* SessionV2.Service
+      const execution = yield* SessionExecution.Service
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-input-only", name: "echo", input: { text: "first" } }),
+          LLMEvent.stepFinish({
+            index: 0,
+            reason: "tool-calls",
+            usage: { inputTokens: 6, nonCachedInputTokens: 6, outputTokens: 0, totalTokens: 6 },
+          }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-input-only-second", ["must not run"]).completeEvents,
+      ]
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "work" }), resume: false })
+
+      const result = yield* execution.supervise({ sessionID, maxTokens: 5, maxTurns: 2, timeoutMs: 1_000 })
+
+      expect(result.status).toBe("budget_exhausted")
+      expect(result.usage.tokens).toBe(6)
+      expect(result.usage.turns).toBe(1)
+      expect(requests).toHaveLength(1)
+    }),
+  )
+
   it.effect("stops before a continuation provider turn exhausts its token cap", () =>
     Effect.gen(function* () {
       yield* setup
+      requests.length = 0
       const session = yield* SessionV2.Service
       const execution = yield* SessionExecution.Service
       responses = [

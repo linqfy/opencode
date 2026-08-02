@@ -1,4 +1,4 @@
-import { Deferred, Effect, Scope } from "effect"
+import { Cause, Deferred, Effect, Exit, Scope } from "effect"
 import { createScheduler } from "@ultracode/agents"
 import type { SessionExecution } from "@opencode-ai/core/session/execution"
 import type { TaskSchedulerAdapter } from "@/tool/task"
@@ -387,6 +387,9 @@ export function createTaskSchedulerAdapter(input: {
             budget: { total: rootBudget, fixedCosts: 0 },
           }),
         )
+        const root = yield* Effect.promise(() => input.scheduler.getTask(rootId, rootId))
+        const childCap = Math.min(maxTokens, root.reserved_child_pool - root.budget_used)
+        if (!Number.isSafeInteger(childCap) || childCap <= 0) return yield* Effect.fail(new Error("child budget exhausted"))
         yield* Effect.promise(() =>
           input.scheduler.spawn({
             key: `task:${rootId}:${taskId}:spawn`,
@@ -397,25 +400,78 @@ export function createTaskSchedulerAdapter(input: {
               depth: 1,
               stateChanging: true,
               dependencyIds: [],
-              requestedMaxTokens: budget,
+              requestedMaxTokens: childCap,
               requestedMaxTimeMs: timeoutMs,
               forkMode: request.forkMode,
               selectedEvidenceArtifactIds: [],
               toolIds: request.agent.toolConstraints,
               expectedDeliverable: { name: "task-result", requiredFields: ["summary"] },
             },
-            budget: { total: budget, fixedCosts: 0 },
+            budget: { total: childCap, fixedCosts: 0 },
           }),
         )
         const durable = yield* Effect.promise(() => input.scheduler.getTask(rootId, taskId))
+        const executionCap = Math.min(childCap, durable.budget)
         const recovering = durable.state === "running"
         if (!recovering)
           yield* Effect.promise(() => input.scheduler.admit(rootId, taskId, `task:${rootId}:${taskId}:admit`))
         const scope = yield* Scope.make()
-        const lease = yield* (recovering
+        const recovered = yield* (recovering
           ? input.worktree.recover({ rootId, taskId, stateChanging: true })
           : input.worktree.acquire({ rootId, taskId, stateChanging: true }))
-          .pipe(Effect.provideService(Scope.Scope, scope))
+          .pipe(Effect.provideService(Scope.Scope, scope), Effect.exit)
+        if (Exit.isFailure(recovered)) {
+          const failure = Cause.squash(recovered.cause)
+          const reason = failure instanceof Error ? failure : new Error(String(failure))
+          const worktreeID = durable.worktree_id
+          if (!recovering || !worktreeID) return yield* Effect.fail(reason)
+          const terminal = {
+            status: "failed" as const,
+            usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+            artifactIds: [],
+            changedPaths: [],
+            blockedReason: boundedReason(reason.message),
+          }
+          const evidence = terminalResult(terminal).evidence
+          yield* Effect.promise(() =>
+            input.scheduler.commitDeliverable({
+              rootId,
+              taskId,
+              stateKey: `task:${rootId}:${taskId}:recovery-terminal`,
+              deliverableKey: `task:${rootId}:${taskId}:deliverable`,
+              status: "failed",
+              manifest: evidence,
+            }),
+          )
+          yield* Effect.promise(() =>
+            input.scheduler.sendMailbox({
+              key: `task:${rootId}:${taskId}:parent-message`,
+              rootId,
+              messageId: `message_${encodeID(`${rootId}\0${taskId}`)}`,
+              senderTaskId: taskId,
+              recipientTaskId: rootId,
+              evidence,
+            }),
+          )
+          yield* Effect.promise(() =>
+            input.scheduler.releaseWorktree(
+              rootId,
+              taskId,
+              worktreeID,
+              `task:${rootId}:${taskId}:worktree-released`,
+            ),
+          )
+          const handle = {
+            rootId,
+            taskId,
+            status: "waiting" as const,
+            summary: evidence.summary,
+            evidence,
+          }
+          active.set(taskId, { rootId, lease: undefined as never, handle })
+          return handle
+        }
+        const lease = recovered.value
         if (!recovering)
           yield* Effect.promise(() =>
             input.scheduler.leaseWorktree(
@@ -434,7 +490,7 @@ export function createTaskSchedulerAdapter(input: {
           model: request.agent.model,
           toolConstraints: request.agent.toolConstraints,
           maxTurns,
-          maxTokens,
+          maxTokens: executionCap,
           timeoutMs,
           forkMode: request.forkMode,
           parent: { sessionID: request.parent.sessionID, messageID: request.parent.messageID },
@@ -576,4 +632,8 @@ function terminalResult(terminal: SessionExecution.TerminalRunResult): {
 
 function encodeID(value: string) {
   return Buffer.from(value).toString("hex")
+}
+
+function boundedReason(reason: string) {
+  return reason.slice(0, 1_024)
 }

@@ -11,6 +11,7 @@ export interface TaskRecord {
   readonly budget_used: number
   readonly state: string
   readonly dependencies: readonly string[]
+  readonly worktree_id?: string
 }
 
 export interface MailboxMessage {
