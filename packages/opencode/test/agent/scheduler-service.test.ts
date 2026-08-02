@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { SchedulerService, resolveSidecarBin } from "../../src/agent/scheduler-service"
+import { SchedulerService, createReadApi, resolveSidecarBin } from "../../src/agent/scheduler-service"
 
 const runtime = {
   parentLocation: () => Effect.succeed({ directory: "/workspace" }),
@@ -23,6 +23,19 @@ const runtime = {
 }
 
 describe("SchedulerService", () => {
+  test("exposes location-scoped neutral read APIs through the events client", async () => {
+    const api = createReadApi({
+      queryTaskGraph: async () => ({ tasks: [], edges: [], next_cursor: null }),
+      listApprovalHistory: async () => ({ items: [], next_cursor: null }),
+      queryTaskDeliverables: async () => ({ items: [], next_cursor: null }),
+    })
+    await expect(api.taskGraph({ rootId: "root", workspaceDirectory: "C:\\workspace" })).resolves.toEqual({
+      tasks: [], edges: [], next_cursor: null,
+    })
+    await expect(api.approvals({ workspaceDirectory: "C:\\workspace", projectId: "project" })).resolves.toEqual({
+      items: [], next_cursor: null,
+    })
+  })
   test("prefers the explicit sidecar binary over the development binary", () => {
     expect(
       resolveSidecarBin({

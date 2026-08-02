@@ -375,3 +375,75 @@ fn legacy_unscoped_approval_audit_rows_are_not_queryable() {
     sidecar.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn stage7_read_pages_are_scoped_and_cursor_stable() {
+    let dir = base("stage7-read-pages");
+    let mut sidecar = Sidecar::spawn(&dir);
+    for (root, workspace, task) in [
+        ("root-a", "C:\\workspace-a", "task-a"),
+        ("root-b", "C:\\workspace-b", "task-b"),
+    ] {
+        let response = sidecar.call(
+            task.as_bytes()[task.len() - 1] as u64,
+            "propose_commit",
+            json!({ "key": task, "kind": { "kind": "task-spawned", "data": {
+                "root_id": root, "task_id": task, "parent_task_id": null, "depth": 0,
+                "state_changing": false, "dependencies": [], "budget": 10,
+                "workspace_directory": workspace
+            }}}),
+        );
+        assert!(response["error"].is_null(), "{response}");
+    }
+    let second_task = sidecar.call(
+        3,
+        "propose_commit",
+        json!({ "key": "task-a-2", "kind": { "kind": "task-spawned", "data": {
+            "root_id": "root-a", "task_id": "task-a-2", "parent_task_id": "task-a", "depth": 1,
+            "state_changing": false, "dependencies": ["task-a"], "budget": 5
+        }}}),
+    );
+    assert!(second_task["error"].is_null(), "{second_task}");
+    let first = sidecar.call(
+        10,
+        "query_task_graph",
+        json!({
+            "root_id": "root-a", "workspace_directory": "C:\\workspace-a", "limit": 1
+        }),
+    );
+    assert_eq!(first["result"]["tasks"].as_array().unwrap().len(), 1);
+    let cursor = first["result"]["next_cursor"].as_str().unwrap();
+    let second = sidecar.call(11, "query_task_graph", json!({
+        "root_id": "root-a", "workspace_directory": "C:\\workspace-a", "cursor": cursor, "limit": 1
+    }));
+    assert_eq!(second["result"]["tasks"][0]["task_id"], "task-a-2");
+    assert_eq!(
+        second["result"]["edges"],
+        json!([{ "task_id": "task-a-2", "dependency_task_id": "task-a" }])
+    );
+    assert!(second["result"]["next_cursor"].is_null());
+
+    let mismatch = sidecar.call(
+        12,
+        "query_task_graph",
+        json!({
+            "root_id": "root-a", "workspace_directory": "C:\\workspace-b", "limit": 1
+        }),
+    );
+    assert_eq!(
+        mismatch["result"],
+        json!({"tasks": [], "edges": [], "next_cursor": null})
+    );
+
+    let deliverables = sidecar.call(
+        13,
+        "query_task_deliverables",
+        json!({
+            "root_id": "root-a", "workspace_directory": "C:\\workspace-a", "limit": 1
+        }),
+    );
+    assert_eq!(deliverables["result"]["items"], json!([]));
+    assert!(deliverables["result"].get("bytes").is_none());
+    sidecar.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

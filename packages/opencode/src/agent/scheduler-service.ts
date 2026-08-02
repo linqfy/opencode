@@ -25,8 +25,16 @@ import type { TaskSchedulerAdapter } from "@/tool/task"
 
 type SchedulerClient = Pick<
   EventsClient,
-  "ping" | "stop" | "listTasks" | "listMailbox" | "listTaskDeliverables" | "proposeCommit"
+  "ping" | "stop" | "listTasks" | "listMailbox" | "listTaskDeliverables" | "proposeCommit" | "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory"
 >
+
+type ReadClient = Pick<SchedulerClient, "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory">
+
+export type ReadApi = {
+  readonly taskGraph: (input: { rootId: string; workspaceDirectory: string; cursor?: string; limit?: number }) => ReturnType<ReadClient["queryTaskGraph"]>
+  readonly approvals: (input: { workspaceDirectory: string; projectId?: string; cursor?: string; limit?: number }) => ReturnType<ReadClient["listApprovalHistory"]>
+  readonly deliverables: (input: { rootId: string; workspaceDirectory: string; cursor?: string; limit?: number }) => ReturnType<ReadClient["queryTaskDeliverables"]>
+}
 
 type Runtime = {
   readonly parentLocation: () => Effect.Effect<ChildLocation>
@@ -37,9 +45,18 @@ type Runtime = {
 
 export interface Interface {
   readonly adapter: Effect.Effect<TaskSchedulerAdapter, Error>
+  readonly read: Effect.Effect<ReadApi, Error>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SchedulerService") {}
+
+export function createReadApi(client: ReadClient): ReadApi {
+  return {
+    taskGraph: (input) => client.queryTaskGraph(input.rootId, input.workspaceDirectory, input.cursor, input.limit),
+    approvals: (input) => client.listApprovalHistory(input.workspaceDirectory, input.projectId, input.cursor, input.limit),
+    deliverables: (input) => client.queryTaskDeliverables(input.rootId, input.workspaceDirectory, input.cursor, input.limit),
+  }
+}
 
 export function eventServicePaths() {
   const state = path.join(Global.Path.state, "ultracode-events")
@@ -113,8 +130,9 @@ export const layerWith = (input: {
               ),
             ),
             Effect.flatMap(({ client }) =>
-              Effect.succeed(
-                createTaskSchedulerAdapter({
+              Effect.succeed({
+                client,
+                adapter: createTaskSchedulerAdapter({
                   scheduler: createScheduler(client),
                   worktree: createWorktreeLeaseAdapter(input.runtime.parentLocation, input.runtime.worktree),
                   child: createChildSessionAdapter({
@@ -122,12 +140,15 @@ export const layerWith = (input: {
                     execution: input.runtime.execution,
                   }),
                 }),
-              ),
+              }),
             ),
           )
           .pipe(Effect.provideService(Scope.Scope, scope)),
       )
-      return Service.of({ adapter })
+      return Service.of({
+        adapter: adapter.pipe(Effect.map((value) => value.adapter)),
+        read: adapter.pipe(Effect.map((value) => createReadApi(value.client))),
+      })
     }),
   )
 

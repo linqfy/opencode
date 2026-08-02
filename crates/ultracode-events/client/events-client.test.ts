@@ -184,4 +184,11 @@ describe("EventsClient", () => {
     ])
     expect(await client.listTaskDeliverables("root-client", "C:\\workspace")).toHaveLength(1)
   })
+
+  test("sidecar client exposes paged Stage 7 reads", async () => {
+    const page = await client.queryTaskGraph("root-client", "C:\\workspace", undefined, 1)
+    expect(page).toEqual(expect.objectContaining({ tasks: expect.any(Array), edges: expect.any(Array) }))
+    const deliverables = await client.queryTaskDeliverables("root-client", "C:\\workspace", undefined, 1)
+    expect(deliverables).toEqual(expect.objectContaining({ items: expect.any(Array), next_cursor: null }))
+  })
 })

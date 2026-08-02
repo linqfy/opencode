@@ -68,8 +68,29 @@ pub struct TaskRecord {
     pub budget_used: u64,
     pub budget_reclaimed: u64,
     pub state: String,
+    pub terminal: Option<TaskTerminal>,
     pub dependencies: Vec<String>,
     pub worktree_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskTerminal {
+    pub state: String,
+    pub reason: Option<String>,
+    pub cancellation_observed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskGraphEdge {
+    pub task_id: String,
+    pub dependency_task_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskGraphPage {
+    pub tasks: Vec<TaskRecord>,
+    pub edges: Vec<TaskGraphEdge>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -114,6 +135,46 @@ pub struct TaskDeliverable {
     pub artifact_ids: Vec<String>,
     pub changed_paths: Vec<String>,
     pub test_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskDeliverablePage {
+    pub items: Vec<TaskDeliverable>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TaskPageCursor {
+    root_id: String,
+    task_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ApprovalPageCursor<'a> {
+    workspace_directory: &'a str,
+    project_id: Option<&'a str>,
+    recorded_at: u64,
+    approval_id: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovalPageCursorOwned {
+    workspace_directory: String,
+    project_id: Option<String>,
+    recorded_at: u64,
+    approval_id: String,
+}
+
+fn terminal_details(
+    state: String,
+    reason: Option<String>,
+    cancellation_observed: bool,
+) -> Option<TaskTerminal> {
+    matches!(state.as_str(), "completed" | "failed" | "cancelled").then_some(TaskTerminal {
+        state,
+        reason,
+        cancellation_observed,
+    })
 }
 
 #[derive(Deserialize)]
@@ -850,7 +911,7 @@ impl ProjectionStore {
         root_id: &str,
         limit: u64,
     ) -> Result<Vec<TaskRecord>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare("SELECT tasks.root_id, tasks.task_id, tasks.parent_task_id, tasks.depth, tasks.state_changing, tasks.budget, tasks.reserved_parent, tasks.reserved_child_pool, tasks.reserved_synthesis, tasks.budget_used, tasks.budget_reclaimed, tasks.state, worktree_leases.worktree_id FROM tasks LEFT JOIN worktree_leases ON worktree_leases.root_id = tasks.root_id AND worktree_leases.task_id = tasks.task_id WHERE tasks.root_id = ?1 ORDER BY tasks.task_id ASC LIMIT ?2")?;
+        let mut stmt = self.conn.prepare("SELECT tasks.root_id, tasks.task_id, tasks.parent_task_id, tasks.depth, tasks.state_changing, tasks.budget, tasks.reserved_parent, tasks.reserved_child_pool, tasks.reserved_synthesis, tasks.budget_used, tasks.budget_reclaimed, tasks.state, tasks.cancellation_reason, tasks.cancellation_observed, worktree_leases.worktree_id FROM tasks LEFT JOIN worktree_leases ON worktree_leases.root_id = tasks.root_id AND worktree_leases.task_id = tasks.task_id WHERE tasks.root_id = ?1 ORDER BY tasks.task_id ASC LIMIT ?2")?;
         let rows = stmt.query_map(params![root_id, limit.min(200)], |row| {
             Ok(TaskRecord {
                 root_id: row.get(0)?,
@@ -865,8 +926,9 @@ impl ProjectionStore {
                 budget_used: row.get(9)?,
                 budget_reclaimed: row.get(10)?,
                 state: row.get(11)?,
+                terminal: terminal_details(row.get(11)?, row.get(12)?, row.get(13)?),
                 dependencies: Vec::new(),
-                worktree_id: row.get(12)?,
+                worktree_id: row.get(14)?,
             })
         })?;
         let mut tasks = rows.collect::<Result<Vec<_>, _>>()?;
@@ -877,6 +939,98 @@ impl ProjectionStore {
                 .collect::<Result<Vec<String>, _>>()?;
         }
         Ok(tasks)
+    }
+
+    pub fn query_task_graph(
+        &self,
+        root_id: &str,
+        cursor: Option<&str>,
+        limit: u64,
+    ) -> Result<TaskGraphPage, rusqlite::Error> {
+        let limit = limit.min(200);
+        let after = cursor
+            .map(|value| serde_json::from_str::<TaskPageCursor>(value))
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if let Some(after) = &after {
+            if after.root_id != root_id {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+        }
+        let mut stmt = self.conn.prepare("SELECT tasks.root_id, tasks.task_id, tasks.parent_task_id, tasks.depth, tasks.state_changing, tasks.budget, tasks.reserved_parent, tasks.reserved_child_pool, tasks.reserved_synthesis, tasks.budget_used, tasks.budget_reclaimed, tasks.state, tasks.cancellation_reason, tasks.cancellation_observed, worktree_leases.worktree_id FROM tasks LEFT JOIN worktree_leases ON worktree_leases.root_id = tasks.root_id AND worktree_leases.task_id = tasks.task_id WHERE tasks.root_id = ?1 AND (?2 IS NULL OR tasks.task_id > ?2) ORDER BY tasks.task_id ASC LIMIT ?3")?;
+        let rows = stmt.query_map(
+            params![
+                root_id,
+                after.as_ref().map(|value| value.task_id.as_str()),
+                limit + 1
+            ],
+            |row| {
+                let state: String = row.get(11)?;
+                Ok(TaskRecord {
+                    root_id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    parent_task_id: row.get(2)?,
+                    depth: row.get(3)?,
+                    state_changing: row.get(4)?,
+                    budget: row.get(5)?,
+                    reserved_parent: row.get(6)?,
+                    reserved_child_pool: row.get(7)?,
+                    reserved_synthesis: row.get(8)?,
+                    budget_used: row.get(9)?,
+                    budget_reclaimed: row.get(10)?,
+                    terminal: terminal_details(state.clone(), row.get(12)?, row.get(13)?),
+                    state,
+                    dependencies: Vec::new(),
+                    worktree_id: row.get(14)?,
+                })
+            },
+        )?;
+        let mut tasks = rows.collect::<Result<Vec<_>, _>>()?;
+        let has_more = tasks.len() > limit as usize;
+        if has_more {
+            tasks.pop();
+        }
+        let next_cursor = if has_more {
+            tasks.last().map(|task| {
+                serde_json::to_string(&TaskPageCursor {
+                    root_id: root_id.to_string(),
+                    task_id: task.task_id.clone(),
+                })
+                .expect("task cursor serializes")
+            })
+        } else {
+            None
+        };
+        let task_ids = tasks
+            .iter()
+            .map(|task| task.task_id.as_str())
+            .collect::<Vec<_>>();
+        let mut edges = Vec::new();
+        for task_id in task_ids {
+            let mut dependencies = self.conn.prepare("SELECT dependency_task_id FROM task_dependencies WHERE root_id = ?1 AND task_id = ?2 ORDER BY dependency_task_id ASC")?;
+            edges.extend(
+                dependencies
+                    .query_map(params![root_id, task_id], |row| {
+                        Ok(TaskGraphEdge {
+                            task_id: task_id.to_string(),
+                            dependency_task_id: row.get(0)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
+        for task in &mut tasks {
+            task.dependencies = edges
+                .iter()
+                .filter(|edge| edge.task_id == task.task_id)
+                .map(|edge| edge.dependency_task_id.clone())
+                .collect();
+        }
+        Ok(TaskGraphPage {
+            tasks,
+            edges,
+            next_cursor,
+        })
     }
 
     pub fn list_mailbox(
@@ -961,6 +1115,62 @@ impl ProjectionStore {
         rows.collect()
     }
 
+    pub fn query_task_deliverables(
+        &self,
+        root_id: &str,
+        cursor: Option<&str>,
+        limit: u64,
+    ) -> Result<TaskDeliverablePage, rusqlite::Error> {
+        let limit = limit.min(200);
+        let after = cursor
+            .map(|value| serde_json::from_str::<TaskPageCursor>(value))
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if let Some(after) = &after {
+            if after.root_id != root_id {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+        }
+        let mut stmt = self.conn.prepare("SELECT root_id, task_id, status, summary, artifact_ids, changed_paths, test_summary FROM task_deliverables WHERE root_id = ?1 AND (?2 IS NULL OR task_id > ?2) ORDER BY task_id ASC LIMIT ?3")?;
+        let rows = stmt.query_map(
+            params![
+                root_id,
+                after.as_ref().map(|value| value.task_id.as_str()),
+                limit + 1
+            ],
+            |row| {
+                Ok(TaskDeliverable {
+                    root_id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    status: row.get(2)?,
+                    summary: row.get(3)?,
+                    artifact_ids: serde_json::from_str(&row.get::<_, String>(4)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    changed_paths: serde_json::from_str(&row.get::<_, String>(5)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    test_summary: row.get(6)?,
+                })
+            },
+        )?;
+        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        let has_more = items.len() > limit as usize;
+        if has_more {
+            items.pop();
+        }
+        let next_cursor = if has_more {
+            items.last().map(|item| {
+                serde_json::to_string(&TaskPageCursor {
+                    root_id: root_id.to_string(),
+                    task_id: item.task_id.clone(),
+                })
+                .expect("deliverable cursor serializes")
+            })
+        } else {
+            None
+        };
+        Ok(TaskDeliverablePage { items, next_cursor })
+    }
+
     pub fn list_approval_history(
         &self,
         workspace_directory: &str,
@@ -969,18 +1179,24 @@ impl ProjectionStore {
         limit: u64,
     ) -> Result<(Vec<ApprovalRecord>, Option<String>), rusqlite::Error> {
         let cursor = cursor
-            .and_then(|value| serde_json::from_str::<(u64, String, String, String)>(value).ok());
+            .map(|value| serde_json::from_str::<ApprovalPageCursorOwned>(value))
+            .transpose()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if let Some(cursor) = &cursor {
+            if cursor.workspace_directory != workspace_directory
+                || cursor.project_id.as_deref() != project_id
+            {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+        }
         let mut stmt = self.conn.prepare(
             "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources,
                     expires_at, agent, turn, recorded_at, workspace_directory, project_id
              FROM approval_history
-             WHERE workspace_directory = ?1 AND (?2 IS NULL OR project_id = ?2)
-               AND (?3 IS NULL OR recorded_at < ?3 OR
-                    (recorded_at = ?3 AND (approval_id > ?4 OR
-                     (approval_id = ?4 AND workspace_directory > ?5) OR
-                     (approval_id = ?4 AND workspace_directory = ?5 AND project_id > ?6))))
+             WHERE workspace_directory = ?1 AND project_id IS NOT NULL AND (?2 IS NULL OR project_id = ?2)
+               AND (?3 IS NULL OR recorded_at < ?3 OR (recorded_at = ?3 AND approval_id > ?4))
              ORDER BY recorded_at DESC, approval_id ASC, workspace_directory ASC, project_id ASC
-             LIMIT ?7"
+             LIMIT ?5"
         )?;
         let map = |row: &rusqlite::Row<'_>| {
             Ok(ApprovalRecord {
@@ -1010,10 +1226,8 @@ impl ProjectionStore {
             params![
                 workspace_directory,
                 project_id,
-                cursor.as_ref().map(|value| value.0 as i64),
-                cursor.as_ref().map(|value| value.1.as_str()),
-                cursor.as_ref().map(|value| value.2.as_str()),
-                cursor.as_ref().map(|value| value.3.as_str()),
+                cursor.as_ref().map(|value| value.recorded_at as i64),
+                cursor.as_ref().map(|value| value.approval_id.as_str()),
                 limit.min(200) + 1,
             ],
             map,
@@ -1023,14 +1237,18 @@ impl ProjectionStore {
             let item = items
                 .get(limit.min(200) as usize - 1)
                 .expect("approval page has a last item");
-            let cursor_value = (
-                item.recorded_at,
-                item.approval_id.clone(),
-                item.workspace_directory.clone().unwrap_or_default(),
-                item.project_id.clone().unwrap_or_default(),
-            );
+            let recorded_at = item.recorded_at;
+            let approval_id = item.approval_id.clone();
             items.pop();
-            Some(serde_json::to_string(&cursor_value).expect("approval cursor serializes"))
+            Some(
+                serde_json::to_string(&ApprovalPageCursor {
+                    workspace_directory,
+                    project_id,
+                    recorded_at,
+                    approval_id: &approval_id,
+                })
+                .expect("approval cursor serializes"),
+            )
         } else {
             None
         };

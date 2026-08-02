@@ -5,7 +5,7 @@ use crate::artifacts::{ArtifactStore, CredentialClass, Retention};
 use crate::commit::{CommitLog, CommitOutcome};
 use crate::effect::{self, ReconcileAction};
 use crate::event::EventKind;
-use crate::projections::ProjectionStore;
+use crate::projections::{ProjectionStore, TaskDeliverablePage, TaskGraphPage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -27,6 +27,38 @@ pub struct Response {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScopedPageRequest {
+    root_id: String,
+    workspace_directory: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default = "default_page_size")]
+    limit: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovalPageRequest {
+    workspace_directory: String,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default = "default_page_size")]
+    limit: u64,
+}
+
+fn default_page_size() -> u64 {
+    100
+}
+
+fn page_size(limit: u64) -> Result<u64, String> {
+    if !(1..=200).contains(&limit) {
+        return Err("limit must be between 1 and 200".into());
+    }
+    Ok(limit)
 }
 
 impl Response {
@@ -239,6 +271,36 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             .map_err(|e| e.to_string())
         }
 
+        "query_task_graph" => {
+            let input: ScopedPageRequest = serde_json::from_value(req.params.clone())
+                .map_err(|e| format!("bad task graph request: {e}"))?;
+            let limit = page_size(input.limit)?;
+            if input.root_id.is_empty() {
+                return Err("root_id must not be empty".into());
+            }
+            if !is_absolute_workspace(&input.workspace_directory) {
+                return Err("workspace_directory must be absolute".into());
+            }
+            if !state
+                .projections
+                .root_matches(&input.root_id, &input.workspace_directory)
+                .map_err(|e| e.to_string())?
+            {
+                return Ok(json!(TaskGraphPage {
+                    tasks: vec![],
+                    edges: vec![],
+                    next_cursor: None
+                }));
+            }
+            serde_json::to_value(
+                state
+                    .projections
+                    .query_task_graph(&input.root_id, input.cursor.as_deref(), limit)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
+        }
+
         "list_mailbox" => {
             let root_id = req
                 .params
@@ -315,33 +377,50 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             .map_err(|e| e.to_string())
         }
 
-        "list_approval_history" => {
-            let workspace_directory = req
-                .params
-                .get("workspace_directory")
-                .and_then(|value| value.as_str())
-                .ok_or("missing workspace_directory")?;
-            if !is_absolute_workspace(workspace_directory) {
+        "query_task_deliverables" => {
+            let input: ScopedPageRequest = serde_json::from_value(req.params.clone())
+                .map_err(|e| format!("bad deliverables request: {e}"))?;
+            let limit = page_size(input.limit)?;
+            if input.root_id.is_empty() {
+                return Err("root_id must not be empty".into());
+            }
+            if !is_absolute_workspace(&input.workspace_directory) {
                 return Err("workspace_directory must be absolute".into());
             }
-            let project_id = req
-                .params
-                .get("project_id")
-                .map(|value| value.as_str().ok_or("bad project_id"))
-                .transpose()?;
-            let cursor = req
-                .params
-                .get("cursor")
-                .map(|value| value.as_str().ok_or("bad cursor"))
-                .transpose()?;
-            let limit = req
-                .params
-                .get("limit")
-                .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
-                .min(200);
+            if !state
+                .projections
+                .root_matches(&input.root_id, &input.workspace_directory)
+                .map_err(|e| e.to_string())?
+            {
+                return Ok(json!(TaskDeliverablePage {
+                    items: vec![],
+                    next_cursor: None
+                }));
+            }
+            serde_json::to_value(
+                state
+                    .projections
+                    .query_task_deliverables(&input.root_id, input.cursor.as_deref(), limit)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
+        }
+
+        "list_approval_history" => {
+            let input: ApprovalPageRequest = serde_json::from_value(req.params.clone())
+                .map_err(|e| format!("bad approval history request: {e}"))?;
+            if !is_absolute_workspace(&input.workspace_directory) {
+                return Err("workspace_directory must be absolute".into());
+            }
+            let limit = page_size(input.limit)?;
             let (items, next_cursor) = state
                 .projections
-                .list_approval_history(workspace_directory, project_id, cursor, limit)
+                .list_approval_history(
+                    &input.workspace_directory,
+                    input.project_id.as_deref(),
+                    input.cursor.as_deref(),
+                    limit,
+                )
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "items": items, "next_cursor": next_cursor }))
         }

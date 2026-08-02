@@ -52,9 +52,12 @@ export type TaskRecord = {
   budget_used: number
   budget_reclaimed: number
   state: string
+  terminal: { state: string; reason: string | null; cancellation_observed: boolean } | null
   dependencies: string[]
   worktree_id?: string
 }
+export type TaskGraphEdge = { task_id: string; dependency_task_id: string }
+export type TaskGraphPage = { tasks: TaskRecord[]; edges: TaskGraphEdge[]; next_cursor: string | null }
 export type MailboxMessage = {
   root_id: string
   message_id: string
@@ -77,6 +80,7 @@ export type TaskDeliverable = {
   changed_paths: string[]
   test_summary: string | null
 }
+export type TaskDeliverablePage = { items: TaskDeliverable[]; next_cursor: string | null }
 export type ApprovalRecord = {
   approval_id: string
   session_id: string
@@ -183,6 +187,19 @@ export class EventsClient {
   async listTasks(rootId: string, workspaceDirectory: string, limit = 100): Promise<TaskRecord[]> {
     return this.call("list_tasks", { root_id: rootId, workspace_directory: workspaceDirectory, limit })
   }
+  async queryTaskGraph(
+    rootId: string,
+    workspaceDirectory: string,
+    cursor?: string,
+    limit = 100,
+  ): Promise<TaskGraphPage> {
+    return this.call("query_task_graph", {
+      root_id: rootId,
+      workspace_directory: workspaceDirectory,
+      ...(cursor === undefined ? {} : { cursor }),
+      limit,
+    })
+  }
   async listMailbox(
     rootId: string,
     workspaceDirectory: string,
@@ -200,6 +217,19 @@ export class EventsClient {
   }
   async listTaskDeliverables(rootId: string, workspaceDirectory: string, limit = 100): Promise<TaskDeliverable[]> {
     return this.call("list_task_deliverables", { root_id: rootId, workspace_directory: workspaceDirectory, limit })
+  }
+  async queryTaskDeliverables(
+    rootId: string,
+    workspaceDirectory: string,
+    cursor?: string,
+    limit = 100,
+  ): Promise<TaskDeliverablePage> {
+    return this.call("query_task_deliverables", {
+      root_id: rootId,
+      workspace_directory: workspaceDirectory,
+      ...(cursor === undefined ? {} : { cursor }),
+      limit,
+    })
   }
   async listApprovalHistory(
     workspaceDirectory: string,
