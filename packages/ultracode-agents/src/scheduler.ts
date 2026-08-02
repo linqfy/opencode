@@ -56,11 +56,21 @@ export interface EvidenceQuery {
 }
 
 export function createScheduler(client: SchedulerEventClient) {
+  const workspaces = new Map<string, string>()
+  const workspace = (rootId: string) => {
+    const value = workspaces.get(rootId)
+    if (!value) throw new Error(`workspace not bound for root: ${rootId}`)
+    return value
+  }
   return {
     spawn: async (input: SpawnInput) => {
       const budget = createBudget(input.budget)
       if (!budget.ok) throw new Error(budget.error)
-      const tasks = await client.listTasks(input.task.rootId, 100)
+      if (input.task.parentId === undefined) {
+        if (!input.task.workspaceDirectory) throw new Error("root workspace directory is required")
+        workspaces.set(input.task.rootId, input.task.workspaceDirectory)
+      }
+      const tasks = await client.listTasks(input.task.rootId, workspace(input.task.rootId), 100)
       validateSpawn(input, tasks)
       const existing = tasks.find((task) => task.task_id === input.task.taskId)
       if (!existing) {
@@ -74,6 +84,7 @@ export function createScheduler(client: SchedulerEventClient) {
             state_changing: input.task.stateChanging,
             dependencies: [...input.task.dependencyIds],
             budget: input.budget.total,
+            ...(input.task.parentId === undefined ? { workspace_directory: workspace(input.task.rootId) } : {}),
           },
         })
       }
@@ -93,7 +104,7 @@ export function createScheduler(client: SchedulerEventClient) {
       return { rootId: input.task.rootId, taskId: input.task.taskId }
     },
     admit: async (rootId: string, taskId: string, key: string) => {
-      const tasks = await client.listTasks(rootId, EVIDENCE_LIMIT)
+      const tasks = await client.listTasks(rootId, workspace(rootId), EVIDENCE_LIMIT)
       const candidate = tasks.find((task) => task.task_id === taskId)
       if (!candidate) throw new Error(`unknown task: ${taskId}`)
       if (candidate.state === "running") return
@@ -103,7 +114,7 @@ export function createScheduler(client: SchedulerEventClient) {
       await client.proposeCommit(key, stateChanged(rootId, taskId, "running"))
     },
     getTask: async (rootId: string, taskId: string) => {
-      const task = (await client.listTasks(rootId, EVIDENCE_LIMIT)).find((candidate) => candidate.task_id === taskId)
+      const task = (await client.listTasks(rootId, workspace(rootId), EVIDENCE_LIMIT)).find((candidate) => candidate.task_id === taskId)
       if (!task) throw new Error(`unknown task: ${taskId}`)
       return task
     },
@@ -149,7 +160,7 @@ export function createScheduler(client: SchedulerEventClient) {
     },
     sendMailbox: async (input: MailboxInput) => {
       validateEvidence(input.evidence)
-      const sequence = (await currentMailboxSequence(client, input.rootId, input.recipientTaskId)) + 1
+      const sequence = (await currentMailboxSequence(client, input.rootId, workspace(input.rootId), input.recipientTaskId)) + 1
       await client.proposeCommit(input.key, {
         kind: "mailbox-message-sent",
         data: {
@@ -174,11 +185,11 @@ export function createScheduler(client: SchedulerEventClient) {
     },
     commitDeliverable: async (input: DeliverableInput) => {
       validateEvidence(input.manifest)
-      const tasks = await client.listTasks(input.rootId, EVIDENCE_LIMIT)
+      const tasks = await client.listTasks(input.rootId, workspace(input.rootId), EVIDENCE_LIMIT)
       const task = tasks.find((candidate) => candidate.task_id === input.taskId)
       if (!task) throw new Error(`unknown task: ${input.taskId}`)
       if (!isTerminal(input.status)) throw new Error("terminal state required")
-      const deliverables = await client.listTaskDeliverables(input.rootId, EVIDENCE_LIMIT)
+      const deliverables = await client.listTaskDeliverables(input.rootId, workspace(input.rootId), EVIDENCE_LIMIT)
       const deliverable = deliverables.find((candidate) => candidate.task_id === input.taskId)
       if (isTerminal(task.state as TaskState)) {
         if (task.state !== input.status) throw new Error("terminal state conflict")
@@ -206,8 +217,8 @@ export function createScheduler(client: SchedulerEventClient) {
     listEvidence: async (input: EvidenceQuery): Promise<{ mailbox: readonly MailboxMessage[]; deliverables: readonly TaskDeliverable[] }> => {
       const limit = boundedLimit(input.limit)
       return {
-        mailbox: await client.listMailbox(input.rootId, input.recipientTaskId, input.afterSequence ?? 0, limit),
-        deliverables: await client.listTaskDeliverables(input.rootId, limit),
+        mailbox: await client.listMailbox(input.rootId, workspace(input.rootId), input.recipientTaskId, input.afterSequence ?? 0, limit),
+        deliverables: await client.listTaskDeliverables(input.rootId, workspace(input.rootId), limit),
       }
     },
   }
@@ -265,10 +276,10 @@ function boundedLimit(limit: number | undefined) {
   return Math.min(limit, EVIDENCE_LIMIT)
 }
 
-async function currentMailboxSequence(client: SchedulerEventClient, rootId: string, recipientTaskId: string) {
+async function currentMailboxSequence(client: SchedulerEventClient, rootId: string, workspaceDirectory: string, recipientTaskId: string) {
   let afterSequence = 0
   while (true) {
-    const messages = await client.listMailbox(rootId, recipientTaskId, afterSequence, EVIDENCE_LIMIT)
+    const messages = await client.listMailbox(rootId, workspaceDirectory, recipientTaskId, afterSequence, EVIDENCE_LIMIT)
     if (messages.length === 0) return afterSequence
     const sequence = Math.max(afterSequence, ...messages.map((message) => message.sequence))
     if (messages.length < EVIDENCE_LIMIT) return sequence

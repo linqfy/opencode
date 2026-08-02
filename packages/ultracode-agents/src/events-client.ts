@@ -45,8 +45,8 @@ export type TaskEvent = {
 }
 
 export interface SchedulerEventClient {
-  listTasks(rootId: string, limit: number): Promise<readonly TaskRecord[]>
-  listMailbox(rootId: string, recipientTaskId: string, afterSequence: number, limit: number): Promise<readonly MailboxMessage[]>
-  listTaskDeliverables(rootId: string, limit: number): Promise<readonly TaskDeliverable[]>
+  listTasks(rootId: string, workspaceDirectory: string, limit: number): Promise<readonly TaskRecord[]>
+  listMailbox(rootId: string, workspaceDirectory: string, recipientTaskId: string, afterSequence: number, limit: number): Promise<readonly MailboxMessage[]>
+  listTaskDeliverables(rootId: string, workspaceDirectory: string, limit: number): Promise<readonly TaskDeliverable[]>
   proposeCommit(key: string, kind: TaskEvent): Promise<{ readonly seq: number; readonly hash: string; readonly duplicate: boolean }>
 }

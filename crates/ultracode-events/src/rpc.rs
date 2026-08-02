@@ -212,17 +212,16 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("root_id")
                 .and_then(|v| v.as_str())
                 .ok_or("missing root_id")?;
+            let workspace_directory = req.params.get("workspace_directory").and_then(|v| v.as_str()).ok_or("missing workspace_directory")?;
             let limit = req
                 .params
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            serde_json::to_value(
-                state
-                    .projections
-                    .list_tasks(root_id, limit)
-                    .map_err(|e| e.to_string())?,
-            )
+            if !state.projections.root_matches(root_id, workspace_directory).map_err(|e| e.to_string())? {
+                return Ok(json!([]));
+            }
+            serde_json::to_value(state.projections.list_tasks(root_id, limit).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())
         }
 
@@ -232,6 +231,7 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("root_id")
                 .and_then(|v| v.as_str())
                 .ok_or("missing root_id")?;
+            let workspace_directory = req.params.get("workspace_directory").and_then(|v| v.as_str()).ok_or("missing workspace_directory")?;
             let recipient_task_id = req
                 .params
                 .get("recipient_task_id")
@@ -249,12 +249,10 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            serde_json::to_value(
-                state
-                    .projections
-                    .list_mailbox(root_id, recipient_task_id, after_sequence, limit)
-                    .map_err(|e| e.to_string())?,
-            )
+            if !state.projections.root_matches(root_id, workspace_directory).map_err(|e| e.to_string())? {
+                return Ok(json!([]));
+            }
+            serde_json::to_value(state.projections.list_mailbox(root_id, recipient_task_id, after_sequence, limit).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())
         }
 
@@ -264,18 +262,24 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("root_id")
                 .and_then(|v| v.as_str())
                 .ok_or("missing root_id")?;
+            let workspace_directory = req.params.get("workspace_directory").and_then(|v| v.as_str()).ok_or("missing workspace_directory")?;
             let limit = req
                 .params
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            serde_json::to_value(
-                state
-                    .projections
-                    .list_task_deliverables(root_id, limit)
-                    .map_err(|e| e.to_string())?,
-            )
+            if !state.projections.root_matches(root_id, workspace_directory).map_err(|e| e.to_string())? {
+                return Ok(json!([]));
+            }
+            serde_json::to_value(state.projections.list_task_deliverables(root_id, limit).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())
+        }
+
+        "list_approval_history" => {
+            let grant_scope = req.params.get("grant_scope").map(|value| value.as_str().ok_or("bad grant_scope")).transpose()?;
+            let limit = req.params.get("limit").map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?.min(200);
+            let items = state.projections.list_approval_history(grant_scope, limit).map_err(|e| e.to_string())?;
+            Ok(json!({ "items": items }))
         }
 
         "list_memory_records" => {
@@ -453,6 +457,7 @@ struct TaskJournal {
 #[derive(Clone)]
 struct JournalTask {
     parent: Option<String>,
+    workspace_directory: Option<String>,
     depth: u8,
     state_changing: bool,
     budget: u64,
@@ -476,12 +481,14 @@ fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
                 depth,
                 state_changing,
                 budget,
+                workspace_directory,
                 ..
             } => {
                 result.tasks.insert(
                     (root_id, task_id),
                     JournalTask {
                         parent: parent_task_id,
+                        workspace_directory,
                         depth,
                         state_changing,
                         budget,
@@ -600,12 +607,29 @@ fn apply_task_event(journal: &mut TaskJournal, kind: &EventKind) -> Result<(), S
             depth,
             state_changing,
             budget,
+            workspace_directory,
             ..
         } => {
+            if parent_task_id.is_none() {
+                let workspace_directory = workspace_directory.as_deref().ok_or("root workspace directory is required")?;
+                if !is_absolute_workspace(workspace_directory) {
+                    return Err("root workspace directory must be absolute".into());
+                }
+                if journal.tasks.iter().any(|((root, _), task)| {
+                    root == root_id
+                        && task.parent.is_none()
+                        && task.workspace_directory.as_deref() != Some(workspace_directory)
+                }) {
+                    return Err("root workspace mismatch".into());
+                }
+            } else if workspace_directory.is_some() {
+                return Err("only root tasks bind a workspace directory".into());
+            }
             journal.tasks.insert(
                 (root_id.clone(), task_id.clone()),
                 JournalTask {
                     parent: parent_task_id.clone(),
+                    workspace_directory: workspace_directory.clone(),
                     depth: *depth,
                     state_changing: *state_changing,
                     budget: *budget,
@@ -741,8 +765,24 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             depth,
             dependencies,
             budget,
+            workspace_directory,
             ..
         } => {
+            if parent_task_id.is_none() {
+                let workspace_directory = workspace_directory.as_deref().ok_or("root workspace directory is required")?;
+                if !is_absolute_workspace(workspace_directory) {
+                    return Err("root workspace directory must be absolute".into());
+                }
+                if journal.tasks.iter().any(|((root, _), task)| {
+                    root == root_id
+                        && task.parent.is_none()
+                        && task.workspace_directory.as_deref() != Some(workspace_directory)
+                }) {
+                    return Err("root workspace mismatch".into());
+                }
+            } else if workspace_directory.is_some() {
+                return Err("only root tasks bind a workspace directory".into());
+            }
             if journal
                 .tasks
                 .contains_key(&(root_id.clone(), task_id.clone()))
@@ -1019,6 +1059,14 @@ fn validate_mailbox_evidence(
         validate_mailbox_text("blocked_reason", value, 4096)?;
     }
     Ok(())
+}
+
+fn is_absolute_workspace(value: &str) -> bool {
+    Path::new(value).is_absolute()
+        || value.len() >= 3
+            && value.as_bytes()[0].is_ascii_alphabetic()
+            && value.as_bytes()[1] == b':'
+            && matches!(value.as_bytes()[2], b'\\' | b'/')
 }
 
 fn validate_mailbox_references(name: &str, values: &[String]) -> Result<(), String> {
@@ -1529,7 +1577,8 @@ mod tests {
         let spawn = |task_id: &str, parent_task_id: Option<&str>, depth: u8| {
             json!({ "kind": "task-spawned", "data": {
                 "root_id": "root-a", "task_id": task_id, "parent_task_id": parent_task_id,
-                "depth": depth, "state_changing": true, "dependencies": [], "budget": 10
+                "depth": depth, "state_changing": true, "dependencies": [], "budget": 10,
+                "workspace_directory": if parent_task_id.is_none() { Some("C:\\workspace") } else { None }
             }})
         };
 
@@ -1548,7 +1597,7 @@ mod tests {
         for (key, kind, expected) in [
             (
                 "wrong-root",
-                json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": "root", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 }}),
+                json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": "root", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10, "workspace_directory": "C:\\workspace" }}),
                 "duplicate task",
             ),
             (
@@ -1559,7 +1608,7 @@ mod tests {
             ("too-deep", spawn("too-deep", Some("root"), 3), "depth"),
             (
                 "missing-dependency",
-                json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": "missing-dependency", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": ["missing"], "budget": 10 }}),
+                json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": "missing-dependency", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": ["missing"], "budget": 10, "workspace_directory": "C:\\workspace" }}),
                 "unknown task",
             ),
             (
@@ -1591,7 +1640,8 @@ mod tests {
         let spawn = |task_id: &str, parent_task_id: Option<&str>, depth: u8| {
             json!({ "kind": "task-spawned", "data": {
                 "root_id": "root-a", "task_id": task_id, "parent_task_id": parent_task_id,
-                "depth": depth, "state_changing": true, "dependencies": [], "budget": 10
+                "depth": depth, "state_changing": true, "dependencies": [], "budget": 10,
+                "workspace_directory": if parent_task_id.is_none() { Some("C:\\workspace") } else { None }
             }})
         };
 
@@ -1651,7 +1701,7 @@ mod tests {
                        parent: Option<&str>,
                        depth: u8,
                        dependencies: Vec<&str>,
-                       state_changing: bool| json!({ "kind": "task-spawned", "data": { "root_id": root, "task_id": task, "parent_task_id": parent, "depth": depth, "state_changing": state_changing, "dependencies": dependencies, "budget": 10 } });
+                       state_changing: bool| json!({ "kind": "task-spawned", "data": { "root_id": root, "task_id": task, "parent_task_id": parent, "depth": depth, "state_changing": state_changing, "dependencies": dependencies, "budget": 10, "workspace_directory": if parent.is_none() { Some("C:\\workspace") } else { None } } });
 
         assert!(commit(
             &mut state,
@@ -1760,7 +1810,7 @@ mod tests {
             "root",
             json!({ "kind": "task-spawned", "data": {
                 "root_id": "root", "task_id": "root-task", "parent_task_id": null, "depth": 0,
-                "state_changing": false, "dependencies": [], "budget": 100
+                "state_changing": false, "dependencies": [], "budget": 100, "workspace_directory": "C:\\workspace"
             }})
         )
         .error
@@ -1828,7 +1878,7 @@ mod tests {
             )
         };
         for root in ["root-a", "root-b"] {
-            assert!(commit(&mut state, &format!("{root}-root"), json!({ "kind": "task-spawned", "data": { "root_id": root, "task_id": "root", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 }})).error.is_none());
+            assert!(commit(&mut state, &format!("{root}-root"), json!({ "kind": "task-spawned", "data": { "root_id": root, "task_id": "root", "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10, "workspace_directory": "C:\\workspace" }})).error.is_none());
             assert!(commit(&mut state, &format!("{root}-child"), json!({ "kind": "task-spawned", "data": { "root_id": root, "task_id": "child", "parent_task_id": "root", "depth": 1, "state_changing": true, "dependencies": [], "budget": 10 }})).error.is_none());
         }
         assert!(commit(&mut state, "root-worktree", json!({ "kind": "worktree-leased", "data": { "root_id": "root-a", "task_id": "root", "worktree_id": "wt" }})).error.unwrap().contains("eligible"));
@@ -1868,7 +1918,7 @@ mod tests {
                 &req(1, "propose_commit", json!({ "key": key, "kind": kind })),
             )
         };
-        let spawn = |task_id: &str, parent_task_id: Option<&str>| json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": task_id, "parent_task_id": parent_task_id, "depth": if parent_task_id.is_some() { 1 } else { 0 }, "state_changing": true, "dependencies": [], "budget": 10 }});
+        let spawn = |task_id: &str, parent_task_id: Option<&str>| json!({ "kind": "task-spawned", "data": { "root_id": "root-a", "task_id": task_id, "parent_task_id": parent_task_id, "depth": if parent_task_id.is_some() { 1 } else { 0 }, "state_changing": true, "dependencies": [], "budget": 10, "workspace_directory": if parent_task_id.is_none() { Some("C:\\workspace") } else { None } }});
 
         assert!(commit(&mut state, "root", spawn("root", None))
             .error
@@ -1985,7 +2035,7 @@ mod tests {
         for task_id in ["sender", "recipient"] {
             assert!(handle_request(
                 &mut state,
-                &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 } } }))
+                &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10, "workspace_directory": "C:\\workspace" } } }))
             )
             .error
             .is_none());
@@ -2047,7 +2097,7 @@ mod tests {
         let (journal, db, blobs) = dirs("mailbox-restart");
         let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
         for task_id in ["sender", "recipient"] {
-            assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 } } }))).error.is_none());
+            assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10, "workspace_directory": "C:\\workspace" } } }))).error.is_none());
         }
         assert!(handle_request(&mut state, &req(2, "propose_commit", json!({ "key": "two", "kind": { "kind": "mailbox-message-sent", "data": { "root_id": "root", "message_id": "two", "sender_task_id": "sender", "recipient_task_id": "recipient", "sequence": 2, "artifact_ids": [] } } }))).error.is_none());
         drop(state);
@@ -2074,7 +2124,7 @@ mod tests {
         let (journal, db, blobs) = dirs("mailbox-cursor");
         let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
         for task_id in ["sender", "a", "b"] {
-            assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10 } } }))).error.is_none());
+            assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": task_id, "kind": { "kind": "task-spawned", "data": { "root_id": "root", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": true, "dependencies": [], "budget": 10, "workspace_directory": "C:\\workspace" } } }))).error.is_none());
         }
         for recipient in ["a", "b"] {
             assert!(handle_request(&mut state, &req(2, "propose_commit", json!({ "key": format!("message-{recipient}"), "kind": { "kind": "mailbox-message-sent", "data": { "root_id": "root", "message_id": format!("message-{recipient}"), "sender_task_id": "sender", "recipient_task_id": recipient, "sequence": 1, "artifact_ids": [] } } }))).error.is_none());
@@ -2082,7 +2132,7 @@ mod tests {
         assert_eq!(
             handle_request(
                 &mut state,
-                &req(3, "list_mailbox", json!({ "root_id": "root" }))
+                &req(3, "list_mailbox", json!({ "root_id": "root", "workspace_directory": "C:\\workspace" }))
             )
             .result
             .unwrap()
@@ -2097,7 +2147,7 @@ mod tests {
                 &req(
                     4,
                     "list_mailbox",
-                    json!({ "root_id": "root", "after_sequence": 1 })
+                    json!({ "root_id": "root", "workspace_directory": "C:\\workspace", "after_sequence": 1 })
                 )
             )
             .error
@@ -2118,7 +2168,7 @@ mod tests {
                 &req(
                     index * 3 + 1,
                     "propose_commit",
-                    json!({ "key": format!("spawn-{index}"), "kind": { "kind": "task-spawned", "data": { "root_id": "root-bounds", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": false, "dependencies": [], "budget": 1 } } }),
+                    json!({ "key": format!("spawn-{index}"), "kind": { "kind": "task-spawned", "data": { "root_id": "root-bounds", "task_id": task_id, "parent_task_id": null, "depth": 0, "state_changing": false, "dependencies": [], "budget": 1, "workspace_directory": "C:\\workspace" } } }),
                 ),
             );
             assert!(spawned.error.is_none());
@@ -2166,7 +2216,7 @@ mod tests {
             &req(
                 3_000,
                 "list_tasks",
-                json!({ "root_id": "root-bounds", "limit": 500 }),
+                json!({ "root_id": "root-bounds", "workspace_directory": "C:\\workspace", "limit": 500 }),
             ),
         )
         .result
@@ -2176,7 +2226,7 @@ mod tests {
             &req(
                 3_001,
                 "list_mailbox",
-                json!({ "root_id": "root-bounds", "limit": 500 }),
+                json!({ "root_id": "root-bounds", "workspace_directory": "C:\\workspace", "limit": 500 }),
             ),
         )
         .result
@@ -2186,7 +2236,7 @@ mod tests {
             &req(
                 3_002,
                 "list_task_deliverables",
-                json!({ "root_id": "root-bounds", "limit": 500 }),
+                json!({ "root_id": "root-bounds", "workspace_directory": "C:\\workspace", "limit": 500 }),
             ),
         )
         .result
@@ -2197,7 +2247,7 @@ mod tests {
         assert_eq!(
             handle_request(
                 &mut state,
-                &req(3_003, "list_tasks", json!({ "root_id": "root-bounds" }))
+                &req(3_003, "list_tasks", json!({ "root_id": "root-bounds", "workspace_directory": "C:\\workspace" }))
             )
             .result
             .unwrap()

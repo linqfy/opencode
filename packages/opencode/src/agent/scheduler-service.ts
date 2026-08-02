@@ -8,6 +8,8 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
+import { EventV2 } from "@opencode-ai/core/event"
+import { PermissionV2 } from "@opencode-ai/core/permission"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
 import { InstanceState } from "@/effect/instance-state"
 import { Worktree } from "@/worktree"
@@ -63,6 +65,7 @@ export const layerWith = (input: {
   readonly paths: Pick<EventServiceConfig, "journalDir" | "db" | "artifacts">
   readonly start: (config: EventServiceConfig) => SchedulerClient
   readonly runtime: Runtime
+  readonly audit?: EventV2.Interface
 }) =>
   Layer.effect(
     Service,
@@ -70,11 +73,34 @@ export const layerWith = (input: {
       const scope = yield* Scope.Scope
       const adapter = yield* Effect.cached(
         Effect.acquireRelease(
-          Effect.sync(() => input.start({ ...input.paths, sidecarBin: input.sidecarBin, session: "opencode" })),
-          (client) => Effect.sync(() => client.stop()),
+          Effect.gen(function* () {
+            const client = input.start({ ...input.paths, sidecarBin: input.sidecarBin, session: "opencode" })
+            const unsubscribe = input.audit
+              ? yield* input.audit.listen((event) => {
+                  if (event.type !== PermissionV2.Event.Replied.type) return Effect.void
+                  const data = event.data as EventV2.Data<typeof PermissionV2.Event.Replied>
+                  return Effect.tryPromise({
+                    try: () => client.proposeCommit(`approval:${data.requestID}`, {
+                      kind: "approval-finalized",
+                      data: {
+                        approval_id: data.requestID, session_id: data.sessionID, reply: data.reply,
+                        decision: data.reply === "reject" ? "deny" : "allow",
+                        profile: data.decision.profile ?? null, profile_version: data.decision.profileVersion ?? null,
+                        grant_scope: data.grant?.scope ?? null, grant_resources: data.grant?.resources ?? [],
+                        expires_at: data.grant?.expiresAt ?? null, agent: data.decision.agent ?? null,
+                        turn: data.decision.turn ?? null, recorded_at: Date.now(),
+                      },
+                    }),
+                    catch: (error) => error instanceof Error ? error : new Error(String(error)),
+                  }).pipe(Effect.asVoid, Effect.orDie)
+                })
+              : undefined
+            return { client, unsubscribe }
+          }),
+          ({ client, unsubscribe }) => (unsubscribe ?? Effect.void).pipe(Effect.ensuring(Effect.sync(() => client.stop()))),
         )
           .pipe(
-            Effect.tap((client) =>
+            Effect.tap(({ client }) =>
               Effect.tryPromise({
                 try: () => client.ping(),
                 catch: (error) => (error instanceof Error ? error : new Error(String(error))),
@@ -84,7 +110,7 @@ export const layerWith = (input: {
                 ),
               ),
             ),
-            Effect.flatMap((client) =>
+            Effect.flatMap(({ client }) =>
               Effect.succeed(
                 createTaskSchedulerAdapter({
                   scheduler: createScheduler(client),
@@ -122,10 +148,12 @@ export const layer = Layer.unwrap(
     if (!exists)
       return Layer.effect(Service, Effect.fail(new Error(`ultracode-events sidecar not found at ${sidecarBin}`)))
     const worktree = yield* Worktree.Service
+    const audit = yield* EventV2.Service
     return layerWith({
       sidecarBin,
       paths: eventServicePaths(),
       start: EventsClient.start,
+      audit,
       runtime: {
         parentLocation: () => InstanceState.context.pipe(Effect.map((ctx) => ({ directory: ctx.directory }))),
         worktree,
@@ -214,7 +242,7 @@ export const layer = Layer.unwrap(
 export const node = makeGlobalNode({
   service: Service,
   layer: layer.pipe(Layer.orDie),
-  deps: [Worktree.node],
+  deps: [Worktree.node, EventV2.node],
 })
 
 export * as SchedulerService from "./scheduler-service"

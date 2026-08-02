@@ -103,6 +103,8 @@ const Replied = define({
     sessionID: SessionID,
     requestID: ID,
     reply: Reply,
+    decision: Decision,
+    grant: Grant.pipe(optional),
   },
 })
 export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }

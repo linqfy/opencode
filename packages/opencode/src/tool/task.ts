@@ -44,6 +44,7 @@ export namespace TaskSchedulerAdapter {
       readonly taskId: string
       readonly sessionID: SessionID
       readonly messageID: MessageID
+      readonly workspaceDirectory?: string
     }
   }
 
@@ -167,6 +168,7 @@ export const TaskTool = Tool.define(
           taskId: ctx.messageID,
           sessionID: ctx.sessionID,
           messageID: ctx.messageID,
+          workspaceDirectory: ctx.extra?.workspaceDirectory as string | undefined,
         },
       })
       const metadata = {

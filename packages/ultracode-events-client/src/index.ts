@@ -163,24 +163,26 @@ export class EventsClient {
   async rebuildProjections(session: string): Promise<{ count: number }> {
     return this.call("rebuild_projections", { session })
   }
-  async listTasks(rootId: string, limit = 100): Promise<TaskRecord[]> {
-    return this.call("list_tasks", { root_id: rootId, limit })
+  async listTasks(rootId: string, workspaceDirectory: string, limit = 100): Promise<TaskRecord[]> {
+    return this.call("list_tasks", { root_id: rootId, workspace_directory: workspaceDirectory, limit })
   }
   async listMailbox(
     rootId: string,
+    workspaceDirectory: string,
     recipientTaskId?: string,
     afterSequence = 0,
     limit = 100,
   ): Promise<MailboxMessage[]> {
     return this.call("list_mailbox", {
       root_id: rootId,
+      workspace_directory: workspaceDirectory,
       ...(recipientTaskId === undefined ? {} : { recipient_task_id: recipientTaskId }),
       after_sequence: afterSequence,
       limit,
     })
   }
-  async listTaskDeliverables(rootId: string, limit = 100): Promise<TaskDeliverable[]> {
-    return this.call("list_task_deliverables", { root_id: rootId, limit })
+  async listTaskDeliverables(rootId: string, workspaceDirectory: string, limit = 100): Promise<TaskDeliverable[]> {
+    return this.call("list_task_deliverables", { root_id: rootId, workspace_directory: workspaceDirectory, limit })
   }
   async listMemoryRecords(limit = 200): Promise<MemoryRecord[]> {
     return this.call("list_memory_records", { limit })

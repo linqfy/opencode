@@ -32,17 +32,17 @@ class FakeEventClient implements SchedulerEventClient {
   }[] = []
   failNextCommit = false
 
-  async listTasks(rootId: string, limit: number) {
+  async listTasks(rootId: string, _workspaceDirectory: string, limit: number) {
     return this.tasks.filter((task) => task.root_id === rootId).slice(0, limit)
   }
 
-  async listMailbox(rootId: string, recipientTaskId: string, afterSequence: number, limit: number) {
+  async listMailbox(rootId: string, _workspaceDirectory: string, recipientTaskId: string, afterSequence: number, limit: number) {
     return this.mailbox
       .filter((message) => message.root_id === rootId && message.recipient_task_id === recipientTaskId && message.sequence > afterSequence)
       .slice(0, limit)
   }
 
-  async listTaskDeliverables(rootId: string, limit: number) {
+  async listTaskDeliverables(rootId: string, _workspaceDirectory: string, limit: number) {
     return this.deliverables.filter((deliverable) => deliverable.root_id === rootId).slice(0, limit)
   }
 
@@ -120,6 +120,7 @@ function spawnInput(overrides: Record<string, unknown> = {}) {
     key: "spawn-root",
     task: {
       rootId: "root",
+      workspaceDirectory: "/workspace",
       taskId: "root-task",
       depth: 0,
       stateChanging: false,
@@ -416,7 +417,7 @@ describe("sidecar-backed scheduler", () => {
     client.failNextCommit = true
 
     await expect(scheduler.spawn(spawnInput())).rejects.toThrow("sidecar unavailable")
-    expect(await client.listTasks("root", 100)).toEqual([])
+    expect(await client.listTasks("root", "/workspace", 100)).toEqual([])
     await scheduler.spawn(spawnInput())
     expect(client.events).toHaveLength(2)
   })

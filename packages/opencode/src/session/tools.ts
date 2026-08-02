@@ -69,6 +69,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       bypassAgentCheck: input.bypassAgentCheck,
       promptOps: input.promptOps,
       schedulerAdapter,
+      workspaceDirectory: input.session.directory,
     },
     agent: input.agent.name,
     messages: input.messages,

@@ -250,6 +250,17 @@ const layer = Layer.effect(
       }
     }
 
+    function finalizedDecision(request: Request): Decision {
+      return {
+        ...(request.decision ?? {
+          requestedAction: request.action,
+          requestedResources: request.resources,
+          approvalSource: "policy" as const,
+        }),
+        approvalSource: "user",
+      }
+    }
+
     const create = (request: Request, agent?: AgentV2.ID) =>
       EffectRuntime.uninterruptible(
         EffectRuntime.gen(function* () {
@@ -300,13 +311,15 @@ const layer = Layer.effect(
           if (input.idempotencyKey && replies.has(input.idempotencyKey)) return
           const existing = pending.get(input.requestID)
           if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
-          yield* events.publish(Event.Replied, {
-            sessionID: existing.request.sessionID,
-            requestID: existing.request.id,
-            reply: input.reply,
-          })
+          const decision = finalizedDecision(existing.request)
 
           if (input.reply === "reject") {
+            yield* events.publish(Event.Replied, {
+              sessionID: existing.request.sessionID,
+              requestID: existing.request.id,
+              reply: input.reply,
+              decision,
+            })
             yield* Deferred.fail(
               existing.deferred,
               input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
@@ -318,6 +331,7 @@ const layer = Layer.effect(
                 sessionID: item.request.sessionID,
                 requestID: item.request.id,
                 reply: "reject",
+                decision: finalizedDecision(item.request),
               })
               yield* Deferred.fail(item.deferred, new DeclinedError())
               pending.delete(id)
@@ -332,18 +346,28 @@ const layer = Layer.effect(
               resources: existing.request.save,
             })
           }
+          const grant =
+            input.reply === "once" || input.reply === "session" || input.reply === "project" || input.reply === "always"
+              ? {
+                  scope: input.reply === "always" ? ("project" as const) : input.reply,
+                  action: existing.request.action,
+                  resources: existing.request.save?.length ? existing.request.save : existing.request.resources,
+                  sessionID:
+                    input.reply === "session" || input.reply === "once" ? existing.request.sessionID : undefined,
+                  expiresAt: input.expiresAt,
+                  idempotencyKey: input.idempotencyKey ?? existing.request.id,
+                }
+              : undefined
           if (input.reply === "once" || input.reply === "session" || input.reply === "project" || input.reply === "always") {
-            const scope = input.reply === "always" ? "project" : input.reply
-            const idempotencyKey = input.idempotencyKey ?? existing.request.id
-            grants.set(idempotencyKey, {
-              scope,
-              action: existing.request.action,
-              resources: existing.request.save?.length ? existing.request.save : existing.request.resources,
-              sessionID: scope === "session" || scope === "once" ? existing.request.sessionID : undefined,
-              expiresAt: input.expiresAt,
-              idempotencyKey,
-            })
+            grants.set(grant!.idempotencyKey!, grant!)
           }
+          yield* events.publish(Event.Replied, {
+            sessionID: existing.request.sessionID,
+            requestID: existing.request.id,
+            reply: input.reply,
+            decision,
+            grant,
+          })
           if (input.idempotencyKey) replies.set(input.idempotencyKey, input)
           yield* Deferred.succeed(existing.deferred, undefined)
           pending.delete(input.requestID)
@@ -365,11 +389,12 @@ const layer = Layer.effect(
               )
             )
               continue
-            yield* events.publish(Event.Replied, {
-              sessionID: item.request.sessionID,
-              requestID: item.request.id,
-              reply: "always",
-            })
+              yield* events.publish(Event.Replied, {
+                sessionID: item.request.sessionID,
+                requestID: item.request.id,
+                reply: "always",
+                decision: finalizedDecision(item.request),
+              })
             yield* Deferred.succeed(item.deferred, undefined)
             pending.delete(id)
           }

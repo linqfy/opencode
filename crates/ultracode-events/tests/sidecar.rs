@@ -134,3 +134,123 @@ fn sidecar_state_survives_a_restart() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn task_roots_are_bound_to_their_workspace_across_rebuilds() {
+    let dir = base("root-workspace");
+    let root = json!({
+        "kind": "task-spawned",
+        "data": {
+            "root_id": "root_a",
+            "task_id": "root_a",
+            "parent_task_id": null,
+            "depth": 0,
+            "state_changing": false,
+            "dependencies": [],
+            "budget": 100,
+            "workspace_directory": "C:\\workspace-a"
+        }
+    });
+
+    {
+        let mut sidecar = Sidecar::spawn(&dir);
+        assert!(sidecar
+            .call(1, "propose_commit", json!({ "key": "root-a", "kind": root }))
+            ["error"]
+            .is_null());
+        let tasks = sidecar.call(
+            2,
+            "list_tasks",
+            json!({ "root_id": "root_a", "workspace_directory": "C:\\workspace-a" }),
+        );
+        assert_eq!(tasks["result"].as_array().unwrap().len(), 1);
+        let denied = sidecar.call(
+            3,
+            "list_tasks",
+            json!({ "root_id": "root_a", "workspace_directory": "C:\\workspace-b" }),
+        );
+        assert_eq!(denied["result"], json!([]));
+        let mismatch = sidecar.call(
+            4,
+            "propose_commit",
+            json!({
+                "key": "root-a-mismatch",
+                "kind": {
+                    "kind": "task-spawned",
+                    "data": {
+                        "root_id": "root_a",
+                        "task_id": "root_a",
+                        "parent_task_id": null,
+                        "depth": 0,
+                        "state_changing": false,
+                        "dependencies": [],
+                        "budget": 100,
+                        "workspace_directory": "C:\\workspace-b"
+                    }
+                }
+            }),
+        );
+        assert_eq!(mismatch["error"], "root workspace mismatch");
+        sidecar.kill();
+    }
+
+    let mut sidecar = Sidecar::spawn(&dir);
+    let rebuilt = sidecar.call(1, "rebuild_projections", json!({}));
+    assert!(rebuilt["result"]["count"].as_u64().unwrap() >= 1);
+    let tasks = sidecar.call(
+        2,
+        "list_tasks",
+        json!({ "root_id": "root_a", "workspace_directory": "C:\\workspace-a" }),
+    );
+    assert_eq!(tasks["result"].as_array().unwrap().len(), 1);
+    sidecar.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn approval_history_is_rebuildable_paged_and_scope_filtered() {
+    let dir = base("approval-history");
+    let mut sidecar = Sidecar::spawn(&dir);
+    for (id, scope, expires_at) in [("approval-1", "session", 1234), ("approval-2", "project", 5678)] {
+        let response = sidecar.call(
+            id.as_bytes()[id.len() - 1] as u64,
+            "propose_commit",
+            json!({
+                "key": id,
+                "kind": {
+                    "kind": "approval-finalized",
+                    "data": {
+                        "approval_id": id,
+                        "session_id": "ses_1",
+                        "reply": "session",
+                        "decision": "allow",
+                        "profile": "restricted",
+                        "profile_version": "4",
+                        "grant_scope": scope,
+                        "grant_resources": ["src/*"],
+                        "expires_at": expires_at,
+                        "agent": "test",
+                        "turn": "turn_1",
+                        "recorded_at": 100
+                    }
+                }
+            }),
+        );
+        assert!(response["error"].is_null());
+    }
+    let page = sidecar.call(
+        3,
+        "list_approval_history",
+        json!({ "grant_scope": "session", "limit": 1 }),
+    );
+    assert_eq!(page["result"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["result"]["items"][0]["expires_at"], 1234);
+    assert_eq!(page["result"]["items"][0]["profile_version"], "4");
+    sidecar.kill();
+
+    let mut restarted = Sidecar::spawn(&dir);
+    let history = restarted.call(1, "list_approval_history", json!({ "limit": 10 }));
+    assert_eq!(history["result"]["items"].as_array().unwrap().len(), 2);
+    restarted.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

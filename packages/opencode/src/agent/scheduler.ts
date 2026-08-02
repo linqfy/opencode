@@ -173,6 +173,7 @@ export function createWorktreeLeaseAdapter(
   })
 
   return {
+    parentLocation: () => (typeof parentLocation === "function" ? parentLocation() : Effect.succeed(parentLocation)),
     acquire,
     recover,
     release,
@@ -383,6 +384,7 @@ export function createTaskSchedulerAdapter(input: {
           return yield* Effect.fail(new Error("scheduler task caps must be positive integers"))
         const budget = maxTokens
         const rootBudget = Math.ceil(budget / 3) * 10
+        const workspaceDirectory = request.parent.workspaceDirectory ?? (yield* input.worktree.parentLocation()).directory
         yield* Effect.promise(() =>
           input.scheduler.spawn({
             key: `task:${rootId}:root:spawn`,
@@ -398,6 +400,7 @@ export function createTaskSchedulerAdapter(input: {
               selectedEvidenceArtifactIds: [],
               toolIds: [],
               expectedDeliverable: { name: "task-root", requiredFields: [] },
+              workspaceDirectory,
             },
             budget: { total: rootBudget, fixedCosts: 0 },
           }),

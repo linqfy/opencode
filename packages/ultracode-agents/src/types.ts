@@ -9,6 +9,7 @@ export interface ExpectedDeliverable {
 
 export interface TaskInput {
   readonly rootId: string
+  readonly workspaceDirectory?: string
   readonly taskId: string
   readonly parentId?: string
   readonly depth: number

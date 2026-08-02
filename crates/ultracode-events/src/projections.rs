@@ -73,6 +73,22 @@ pub struct TaskRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ApprovalRecord {
+    pub approval_id: String,
+    pub session_id: String,
+    pub reply: String,
+    pub decision: String,
+    pub profile: Option<String>,
+    pub profile_version: Option<String>,
+    pub grant_scope: Option<String>,
+    pub grant_resources: Vec<String>,
+    pub expires_at: Option<u64>,
+    pub agent: Option<String>,
+    pub turn: Option<String>,
+    pub recorded_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MailboxMessage {
     pub root_id: String,
     pub message_id: String,
@@ -163,7 +179,10 @@ impl ProjectionStore {
                    state TEXT NOT NULL, cancellation_reason TEXT, cancellation_observed INTEGER NOT NULL DEFAULT 0,
                    PRIMARY KEY(root_id, task_id)
               );
-              CREATE INDEX IF NOT EXISTS idx_tasks_root ON tasks(root_id, task_id);
+               CREATE INDEX IF NOT EXISTS idx_tasks_root ON tasks(root_id, task_id);
+               CREATE TABLE IF NOT EXISTS task_roots (
+                   root_id TEXT PRIMARY KEY, workspace_directory TEXT NOT NULL
+               );
               CREATE TABLE IF NOT EXISTS task_dependencies (
                   root_id TEXT NOT NULL, task_id TEXT NOT NULL, dependency_task_id TEXT NOT NULL,
                   PRIMARY KEY(root_id, task_id, dependency_task_id)
@@ -180,11 +199,25 @@ impl ProjectionStore {
                    PRIMARY KEY(root_id, message_id), UNIQUE(root_id, recipient_task_id, sequence)
               );
               CREATE INDEX IF NOT EXISTS idx_mailbox_root_recipient_sequence ON mailbox_messages(root_id, recipient_task_id, sequence, message_id);
-              CREATE TABLE IF NOT EXISTS task_deliverables (
+               CREATE TABLE IF NOT EXISTS task_deliverables (
                    root_id TEXT NOT NULL, task_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL,
                    artifact_ids TEXT NOT NULL, changed_paths TEXT NOT NULL, test_summary TEXT,
-                   PRIMARY KEY(root_id, task_id)
-              );",
+                    PRIMARY KEY(root_id, task_id)
+               );
+               CREATE TABLE IF NOT EXISTS approval_history (
+                   approval_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, reply TEXT NOT NULL, decision TEXT NOT NULL,
+                   profile TEXT, profile_version TEXT, grant_scope TEXT, grant_resources TEXT NOT NULL,
+                   expires_at INTEGER, agent TEXT, turn TEXT, recorded_at INTEGER NOT NULL
+               );
+               CREATE INDEX IF NOT EXISTS idx_approval_history_scope_time ON approval_history(grant_scope, recorded_at DESC, approval_id ASC);
+               CREATE TABLE IF NOT EXISTS approval_profiles (
+                   profile TEXT NOT NULL, version TEXT NOT NULL, rules TEXT NOT NULL, sandbox_profile TEXT, recorded_at INTEGER NOT NULL,
+                   PRIMARY KEY(profile, version)
+               );
+               CREATE TABLE IF NOT EXISTS approval_grants (
+                   grant_id TEXT PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL, resources TEXT NOT NULL,
+                   session_id TEXT, expires_at INTEGER, recorded_at INTEGER NOT NULL
+               );",
         )?;
         let has_failure_reason = {
             let mut statement = conn.prepare("PRAGMA table_info(memory_jobs)")?;
@@ -350,7 +383,16 @@ impl ProjectionStore {
                 state_changing,
                 dependencies,
                 budget,
+                workspace_directory,
             } => {
+                if parent_task_id.is_none() {
+                    if let Some(workspace_directory) = workspace_directory {
+                        self.conn.execute(
+                            "INSERT INTO task_roots (root_id, workspace_directory) VALUES (?1, ?2) ON CONFLICT(root_id) DO NOTHING",
+                            params![root_id, workspace_directory],
+                        )?;
+                    }
+                }
                 self.conn.execute(
                     "INSERT INTO tasks (task_id, root_id, parent_task_id, depth, state_changing, budget, state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
                     params![task_id, root_id, parent_task_id, depth, state_changing, budget],
@@ -361,6 +403,24 @@ impl ProjectionStore {
                         params![root_id, task_id, dependency],
                     )?;
                 }
+            }
+            EventKind::ApprovalFinalized { approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at } => {
+                self.conn.execute(
+                    "INSERT INTO approval_history (approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![approval_id, session_id, reply, decision, profile, profile_version, grant_scope, serde_json::to_string(grant_resources).map_err(|_| rusqlite::Error::InvalidParameterName("grant resources".into()))?, expires_at, agent, turn, recorded_at],
+                )?;
+            }
+            EventKind::ApprovalProfileUpdated { profile, version, rules, sandbox_profile, recorded_at } => {
+                self.conn.execute(
+                    "INSERT INTO approval_profiles (profile, version, rules, sandbox_profile, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(profile, version) DO NOTHING",
+                    params![profile, version, serde_json::to_string(rules).map_err(|_| rusqlite::Error::InvalidParameterName("profile rules".into()))?, sandbox_profile, recorded_at],
+                )?;
+            }
+            EventKind::ApprovalGrantUpdated { grant_id, scope, action, resources, session_id, expires_at, recorded_at } => {
+                self.conn.execute(
+                    "INSERT INTO approval_grants (grant_id, scope, action, resources, session_id, expires_at, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(grant_id) DO NOTHING",
+                    params![grant_id, scope, action, serde_json::to_string(resources).map_err(|_| rusqlite::Error::InvalidParameterName("grant resources".into()))?, session_id, expires_at, recorded_at],
+                )?;
             }
             EventKind::TaskStateChanged {
                 root_id,
@@ -512,7 +572,7 @@ impl ProjectionStore {
     pub fn rebuild(&mut self, journal_dir: &Path, session: &str) -> io::Result<usize> {
         self.conn
             .execute_batch(
-                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs; DELETE FROM memory_consolidations; DELETE FROM task_dependencies; DELETE FROM worktree_leases; DELETE FROM mailbox_messages; DELETE FROM task_deliverables; DELETE FROM tasks;",
+                "DELETE FROM events_index; DELETE FROM memory_records; DELETE FROM memory_jobs; DELETE FROM memory_consolidations; DELETE FROM task_dependencies; DELETE FROM worktree_leases; DELETE FROM mailbox_messages; DELETE FROM task_deliverables; DELETE FROM task_roots; DELETE FROM tasks; DELETE FROM approval_history; DELETE FROM approval_profiles; DELETE FROM approval_grants;",
             )
             .map_err(io::Error::other)?;
         let opened = recovery::open(journal_dir, session).map_err(io::Error::other)?;
@@ -832,6 +892,35 @@ impl ProjectionStore {
             })
         })?;
         rows.collect()
+    }
+
+    pub fn list_approval_history(&self, grant_scope: Option<&str>, limit: u64) -> Result<Vec<ApprovalRecord>, rusqlite::Error> {
+        let sql = if grant_scope.is_some() {
+            "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at FROM approval_history WHERE grant_scope = ?1 ORDER BY recorded_at DESC, approval_id ASC LIMIT ?2"
+        } else {
+            "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at FROM approval_history ORDER BY recorded_at DESC, approval_id ASC LIMIT ?1"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let map = |row: &rusqlite::Row<'_>| {
+            Ok(ApprovalRecord {
+                approval_id: row.get(0)?, session_id: row.get(1)?, reply: row.get(2)?, decision: row.get(3)?, profile: row.get(4)?, profile_version: row.get(5)?, grant_scope: row.get(6)?,
+                grant_resources: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|_| rusqlite::Error::InvalidColumnType(7, "grant_resources".into(), rusqlite::types::Type::Text))?,
+                expires_at: row.get(8)?, agent: row.get(9)?, turn: row.get(10)?, recorded_at: row.get(11)?,
+            })
+        };
+        let rows = match grant_scope {
+            Some(scope) => stmt.query_map(params![scope, limit.min(200)], map)?,
+            None => stmt.query_map(params![limit.min(200)], map)?,
+        };
+        rows.collect()
+    }
+
+    pub fn root_matches(&self, root_id: &str, workspace_directory: &str) -> Result<bool, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_roots WHERE root_id = ?1 AND workspace_directory = ?2)",
+            params![root_id, workspace_directory],
+            |row| row.get(0),
+        )
     }
 
     pub fn count(&self) -> Result<u64, rusqlite::Error> {

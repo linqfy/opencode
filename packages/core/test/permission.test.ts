@@ -427,6 +427,43 @@ describe("PermissionV2", () => {
     }),
   )
 
+  it.effect("publishes a finalized grant audit without changing pending permission authority", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const { service, fiber, request } = yield* waitForRequest()
+      const events = yield* EventV2.Service
+      const finalized = yield* Deferred.make<Record<string, unknown>>()
+      const unsubscribe = yield* events.listen((event) =>
+        event.type === PermissionV2.Event.Replied.type
+          ? Deferred.succeed(finalized, event.data as Record<string, unknown>).pipe(Effect.asVoid)
+          : Effect.void,
+      )
+      yield* Effect.addFinalizer(() => unsubscribe)
+
+      yield* service.reply({
+        requestID: request.id,
+        reply: "session",
+        expiresAt: 4_000,
+        idempotencyKey: "audit-grant",
+      })
+      expect(yield* Deferred.await(finalized)).toMatchObject({
+        requestID: request.id,
+        reply: "session",
+        decision: expect.objectContaining({ requestedAction: "read", approvalSource: "user" }),
+        grant: {
+          scope: "session",
+          action: "read",
+          resources: ["src/index.ts"],
+          sessionID: "ses_test",
+          expiresAt: 4_000,
+          idempotencyKey: "audit-grant",
+        },
+      })
+      expect(yield* service.list()).toEqual([])
+      yield* Fiber.join(fiber)
+    }),
+  )
+
   it.effect("defects when an asked permission is declined", () =>
     Effect.gen(function* () {
       yield* setup()
