@@ -1,4 +1,5 @@
 import { Agent } from "@/agent/agent"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import type { ForkMode } from "@ultracode/agents"
 import DESCRIPTION from "./task.txt"
@@ -32,6 +33,7 @@ export namespace TaskSchedulerAdapter {
       readonly name: string
       readonly model: { readonly modelID: string; readonly providerID: string }
       readonly toolConstraints: readonly string[]
+      readonly permissionConstraints?: PermissionV1.Ruleset
     }
     readonly forkMode: ForkMode
     readonly budget: { readonly maxTurns: number; readonly maxTokens: number; readonly maxTimeMs: number }
@@ -149,10 +151,13 @@ export const TaskTool = Tool.define(
 
       const model = next.model ?? (ctx.extra?.model as { modelID: string; providerID: string } | undefined)
       if (!model) return yield* Effect.fail(new Error("TaskTool requires a model in ctx.extra"))
+      const parent = yield* agent.get(ctx.agent)
+      if (!parent) return yield* Effect.fail(new Error(`Unknown invoking agent: ${ctx.agent}`))
+      const policy = deriveChildPolicy({ parent, child: next })
       const handle = yield* scheduler.schedule({
         brief: params.prompt,
         description: params.description,
-        agent: { name: next.name, model, toolConstraints: selectedTools(next.options.tools) },
+        agent: { name: next.name, model, ...policy },
         forkMode: params.task_id ? "recent" : "none",
         budget: { maxTurns: params.maxTurns, maxTokens: params.maxTokens, maxTimeMs: params.timeoutMs },
         background: runInBackground,
@@ -195,4 +200,26 @@ export const TaskTool = Tool.define(
 function selectedTools(value: unknown): readonly string[] {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return []
   return value
+}
+
+export function deriveChildPolicy(input: { readonly parent: Agent.Info; readonly child: Agent.Info }) {
+  const parentTools = selectedTools(input.parent.options.tools)
+  const childTools = selectedTools(input.child.options.tools)
+  if (parentTools.length > 0 && childTools.some((tool) => !parentTools.includes(tool))) {
+    throw new Error("child cannot expand parent tool constraints")
+  }
+  for (const rule of input.child.permission) {
+    if (rule.action !== "allow") continue
+    const parentRule = input.parent.permission.findLast(
+      (candidate) => candidate.permission === rule.permission && candidate.pattern === rule.pattern,
+    )
+    if (parentRule?.action !== "allow") throw new Error("child cannot expand parent permission constraints")
+  }
+  return {
+    toolConstraints: childTools.length > 0 ? childTools : parentTools,
+    permissionConstraints: [
+      ...input.child.permission,
+      ...input.parent.permission.filter((rule) => rule.action !== "allow"),
+    ] satisfies PermissionV1.Ruleset,
+  }
 }

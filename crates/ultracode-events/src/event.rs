@@ -211,6 +211,12 @@ pub enum EventKind {
         amount: u64,
         target: String,
     },
+    TaskBudgetReclaimed {
+        root_id: String,
+        task_id: String,
+        amount: u64,
+        target: String,
+    },
     WorktreeLeased {
         root_id: String,
         task_id: String,

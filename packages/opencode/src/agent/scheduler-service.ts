@@ -3,6 +3,7 @@ import { Context, Effect, Layer, Scope } from "effect"
 import { EventsClient, type EventServiceConfig } from "@ultracode/events-client"
 import { createScheduler } from "@ultracode/agents"
 import { Global } from "@opencode-ai/core/global"
+import { AgentV2 } from "@opencode-ai/core/agent"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -131,19 +132,40 @@ export const layer = Layer.unwrap(
         session: {
           create: (input) =>
             Effect.context<never>().pipe(
-              Effect.flatMap((context) =>
-                (Context.get(context as never, SessionV2.Service) as SessionV2.Interface)
-                  .create({
+              Effect.flatMap((context) => {
+                const agents = Context.get(context as never, AgentV2.Service) as AgentV2.Interface
+                const agent = AgentV2.ID.make(`scheduler_${input.id}`)
+                return agents.transform((draft) => {
+                  const source = draft.get(AgentV2.ID.make(input.agent)) ?? AgentV2.Info.empty(agent)
+                  draft.update(agent, (value) => {
+                    Object.assign(value, source, {
+                      id: agent,
+                      // A child receives an allow-list, never the selected agent's full tool catalog.
+                      permissions: [
+                        { action: "*", resource: "*", effect: "deny" },
+                        ...input.toolConstraints.map((tool) => ({ action: tool, resource: "*", effect: "allow" as const })),
+                        ...(input.permissionConstraints ?? [])
+                          .filter((rule) => rule.action !== "allow")
+                          .map((rule) => ({ action: rule.permission, resource: rule.pattern, effect: rule.action })),
+                      ],
+                    })
+                  })
+                }).pipe(
+                  Effect.andThen(() =>
+                    (Context.get(context as never, SessionV2.Service) as SessionV2.Interface)
+                      .create({
                     id: SessionSchema.ID.make(input.id),
                     location: input.location as never,
-                    agent: input.agent as never,
+                    agent,
                     model: input.model as never,
                   })
                   .pipe(
                     Effect.map((value) => ({ id: value.id })),
                     Effect.orDie,
                   ),
-              ),
+                  ),
+                ).pipe(Effect.scoped)
+              }),
             ),
           prompt: (input) =>
             Effect.context<never>().pipe(

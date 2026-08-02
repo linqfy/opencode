@@ -139,6 +139,14 @@ export function createScheduler(client: SchedulerEventClient) {
         data: { root_id: input.rootId, task_id: input.taskId, amount: input.amount, target: "child-pool" },
       })
     },
+    reclaimChildBudget: async (input: BudgetUsageInput) => {
+      if (!Number.isSafeInteger(input.amount) || input.amount < 0) throw new Error("invalid budget reclaim")
+      if (input.amount === 0) return
+      await client.proposeCommit(input.key, {
+        kind: "task-budget-reclaimed",
+        data: { root_id: input.rootId, task_id: input.taskId, amount: input.amount, target: "child-pool" },
+      })
+    },
     sendMailbox: async (input: MailboxInput) => {
       validateEvidence(input.evidence)
       const sequence = (await currentMailboxSequence(client, input.rootId, input.recipientTaskId)) + 1

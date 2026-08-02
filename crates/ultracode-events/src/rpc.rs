@@ -459,6 +459,7 @@ struct JournalTask {
     state: String,
     reservation: Option<(u64, u64, u64)>,
     used: u64,
+    reclaimed: u64,
 }
 
 fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
@@ -487,6 +488,7 @@ fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
                         state: "pending".into(),
                         reservation: None,
                         used: 0,
+                        reclaimed: 0,
                     },
                 );
             }
@@ -529,6 +531,19 @@ fn task_journal(dir: &Path, session: &str) -> Result<TaskJournal, String> {
                         .used
                         .checked_add(amount)
                         .ok_or("task budget use overflow")?;
+                }
+            }
+            EventKind::TaskBudgetReclaimed {
+                root_id,
+                task_id,
+                amount,
+                ..
+            } => {
+                if let Some(task) = result.tasks.get_mut(&(root_id, task_id)) {
+                    task.reclaimed = task
+                        .reclaimed
+                        .checked_add(amount)
+                        .ok_or("task budget reclaim overflow")?;
                 }
             }
             EventKind::WorktreeLeased {
@@ -597,6 +612,7 @@ fn apply_task_event(journal: &mut TaskJournal, kind: &EventKind) -> Result<(), S
                     state: "pending".into(),
                     reservation: None,
                     used: 0,
+                    reclaimed: 0,
                 },
             );
         }
@@ -639,6 +655,19 @@ fn apply_task_event(journal: &mut TaskJournal, kind: &EventKind) -> Result<(), S
                     .used
                     .checked_add(*amount)
                     .ok_or("task budget use overflow")?;
+            }
+        }
+        EventKind::TaskBudgetReclaimed {
+            root_id,
+            task_id,
+            amount,
+            ..
+        } => {
+            if let Some(task) = journal.tasks.get_mut(&(root_id.clone(), task_id.clone())) {
+                task.reclaimed = task
+                    .reclaimed
+                    .checked_add(*amount)
+                    .ok_or("task budget reclaim overflow")?;
             }
         }
         EventKind::WorktreeLeased {
@@ -711,6 +740,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             parent_task_id,
             depth,
             dependencies,
+            budget,
             ..
         } => {
             if journal
@@ -737,6 +767,24 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                     >= 3
                 {
                     return Err(format!("parent already has three children: {parent}"));
+                }
+                if let Some((_, pool, _)) = parent_task.reservation {
+                    let reserved = journal
+                        .tasks
+                        .iter()
+                        .filter(|((root, _), task)| {
+                            root == root_id && task.parent.as_deref() == Some(parent)
+                        })
+                        .try_fold(0u64, |total, (_, task)| {
+                            total.checked_add(task.budget.saturating_sub(task.reclaimed))
+                        })
+                        .ok_or("task child-pool budget exceeded")?;
+                    if reserved
+                        .checked_add(*budget)
+                        .map_or(true, |total| total > pool)
+                    {
+                        return Err("task child-pool budget exceeded".into());
+                    }
                 }
             } else if *depth != 0 {
                 return Err("root task depth must be 0".into());
@@ -806,6 +854,20 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                     .map_or(true, |used| used > pool)
             {
                 return Err("task child-pool budget exceeded".into());
+            }
+        }
+        EventKind::TaskBudgetReclaimed {
+            root_id,
+            task_id,
+            amount,
+            target,
+        } => {
+            let task = journal_task(&journal, root_id, task_id)?;
+            if target != "child-pool"
+                || !matches!(task.state.as_str(), "completed" | "failed" | "cancelled")
+                || *amount > task.budget.saturating_sub(task.reclaimed)
+            {
+                return Err("invalid task child-pool reclaim".into());
             }
         }
         EventKind::TaskCancellationRequested {
@@ -1673,6 +1735,80 @@ mod tests {
         assert!(commit(&mut state, "cancelled-deliverable", json!({ "kind": "task-deliverable-committed", "data": { "root_id": "root-a", "task_id": "child", "status": "cancelled", "summary": "yes", "artifact_ids": [], "changed_paths": [], "test_summary": null }})).error.is_none());
         assert!(commit(&mut state, "second-deliverable", json!({ "kind": "task-deliverable-committed", "data": { "root_id": "root-a", "task_id": "child", "status": "cancelled", "summary": "again", "artifact_ids": [], "changed_paths": [], "test_summary": null }})).error.unwrap().contains("duplicate deliverable"));
         assert!(commit(&mut state, "cancel-again", json!({ "kind": "task-cancellation-requested", "data": { "root_id": "root-a", "task_id": "child", "reason": "again" }})).error.unwrap().contains("terminal"));
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn child_pool_capacity_is_reserved_at_spawn_and_reclaimed_only_after_terminal_state() {
+        let (journal, db, blobs) = dirs("task-child-pool-reservation");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let commit = |state: &mut SidecarState, key: &str, kind: Value| {
+            handle_request(
+                state,
+                &req(1, "propose_commit", json!({ "key": key, "kind": kind })),
+            )
+        };
+        let spawned = |task: &str| {
+            json!({ "kind": "task-spawned", "data": {
+                "root_id": "root", "task_id": task, "parent_task_id": "root-task", "depth": 1,
+                "state_changing": true, "dependencies": [], "budget": 20
+            }})
+        };
+
+        assert!(commit(
+            &mut state,
+            "root",
+            json!({ "kind": "task-spawned", "data": {
+                "root_id": "root", "task_id": "root-task", "parent_task_id": null, "depth": 0,
+                "state_changing": false, "dependencies": [], "budget": 100
+            }})
+        )
+        .error
+        .is_none());
+        assert!(commit(&mut state, "root-budget", json!({ "kind": "task-budget-reserved", "data": {
+            "root_id": "root", "task_id": "root-task", "parent": 60, "child_pool": 30, "synthesis": 10
+        }})).error.is_none());
+        assert!(commit(&mut state, "child-a", spawned("child-a"))
+            .error
+            .is_none());
+        assert_eq!(
+            commit(&mut state, "child-b", spawned("child-b"))
+                .error
+                .as_deref(),
+            Some("task child-pool budget exceeded")
+        );
+        assert!(commit(
+            &mut state,
+            "child-a-running",
+            json!({ "kind": "task-state-changed", "data": {
+                "root_id": "root", "task_id": "child-a", "state": "running", "reason": null
+            }})
+        )
+        .error
+        .is_none());
+        assert!(commit(
+            &mut state,
+            "child-a-failed",
+            json!({ "kind": "task-state-changed", "data": {
+                "root_id": "root", "task_id": "child-a", "state": "failed", "reason": null
+            }})
+        )
+        .error
+        .is_none());
+        assert!(commit(
+            &mut state,
+            "child-a-reclaim",
+            json!({ "kind": "task-budget-reclaimed", "data": {
+                "root_id": "root", "task_id": "child-a", "amount": 10, "target": "child-pool"
+            }})
+        )
+        .error
+        .is_none());
+        assert!(
+            commit(&mut state, "child-b-after-reclaim", spawned("child-b"))
+                .error
+                .is_none()
+        );
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
 

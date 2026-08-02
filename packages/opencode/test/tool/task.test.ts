@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
@@ -12,7 +12,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Session } from "@/session/session"
 import { MessageID, type SessionID } from "../../src/session/schema"
-import { TaskTool, type TaskSchedulerAdapter } from "../../src/tool/task"
+import { deriveChildPolicy, TaskTool, type TaskSchedulerAdapter } from "../../src/tool/task"
 import type { Tool } from "../../src/tool/tool"
 import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
@@ -104,6 +104,23 @@ function context(
 }
 
 describe("tool.task", () => {
+  test("rejects a malicious child request that expands the parent tool or permission policy", () => {
+    expect(() =>
+      deriveChildPolicy({
+        parent: {
+          name: "parent",
+          options: { tools: ["read"] },
+          permission: [{ permission: "bash", pattern: "*", action: "deny" }],
+        } as never,
+        child: {
+          name: "child",
+          options: { tools: ["read", "bash"] },
+          permission: [{ permission: "bash", pattern: "*", action: "allow" }],
+        } as never,
+      }),
+    ).toThrow("cannot expand")
+  })
+
   it.instance("delegates exactly once with the selected child contract", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
@@ -126,7 +143,7 @@ describe("tool.task", () => {
         expect.objectContaining({
           brief: "inspect the cache key",
           description: "inspect cache",
-          agent: { name: "general", model: ref, toolConstraints: [] },
+          agent: expect.objectContaining({ name: "general", model: ref, toolConstraints: [] }),
           forkMode: "recent",
           budget: { maxTurns: 4, maxTokens: 1_200, maxTimeMs: 30_000 },
           background: false,

@@ -580,12 +580,13 @@ describe("durable task scheduler adapter", () => {
       evidence: { summary: "implemented bounded result", artifactIds: ["artifact-result"], changedPaths: ["src/result.ts"] },
     })
     expect(JSON.stringify(handle)).not.toContain("transcript")
-    expect(sidecar.tasks.find((task) => task.task_id === handle.rootId)).toMatchObject({ budget_used: 17 })
+    expect(sidecar.events.map((event) => event.kind.kind)).not.toContain("task-budget-used")
+    expect(sidecar.events.map((event) => event.kind.kind)).toContain("task-budget-reclaimed")
     expect(sidecar.deliverables).toEqual([expect.objectContaining({ task_id: handle.taskId, status: "completed" })])
     expect(sidecar.events.map((event) => event.kind.kind).slice(-5)).toEqual([
-      "task-budget-used",
       "task-state-changed",
       "task-deliverable-committed",
+      "task-budget-reclaimed",
       "mailbox-message-sent",
       "worktree-released",
     ])
@@ -696,9 +697,8 @@ describe("durable task scheduler adapter", () => {
       child,
     })
 
-    await expect(
-      Effect.runPromise(
-        adapter.schedule({
+    const handle = await Effect.runPromise(
+      adapter.schedule({
           brief: "work",
           description: "work",
           agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
@@ -711,12 +711,13 @@ describe("durable task scheduler adapter", () => {
             sessionID: "ses_parent" as never,
             messageID: "msg_parent" as never,
           },
-        }),
-      ),
-    ).rejects.toThrow("worktree bootstrap failed")
+      }),
+    )
 
+    expect(handle).toMatchObject({ status: "waiting", evidence: { blockedReason: "worktree bootstrap failed" } })
     expect(created).toEqual([])
     expect(sidecar.events.map((event) => event.kind.kind)).not.toContain("worktree-leased")
+    expect(sidecar.deliverables).toEqual([expect.objectContaining({ status: "failed" })])
   })
 
   test("does not add cancellation lifecycle events after an already terminal task", async () => {
@@ -831,7 +832,7 @@ describe("durable task scheduler adapter", () => {
     expect(sidecar.deliverables).toEqual([expect.objectContaining({ status: "failed" })])
   })
 
-  test.each(["budget-used", "terminal", "deliverable", "parent-message", "worktree-released"])(
+  test.each(["budget-reclaimed", "terminal", "deliverable", "parent-message", "worktree-released"])(
     "repairs finalization after a failed %s commit without leaking its worktree",
     async (boundary) => {
       const sidecar = new FakeSidecar()
@@ -1098,6 +1099,44 @@ describe("durable task scheduler adapter", () => {
     expect(sidecar.deliverables).toEqual([expect.objectContaining({ task_id: "missing-restarted-child", status: "failed" })])
     expect(sidecar.events.map((event) => event.kind.kind)).not.toContain("worktree-leased")
     expect(sidecar.events.find((event) => event.kind.kind === "worktree-released")?.kind.data.worktree_id).toBe("/missing-recovered")
+  })
+
+  test("terminalizes a freshly admitted task when worktree acquisition fails", async () => {
+    const sidecar = new FakeSidecar()
+    const worktree = createWorktreeLeaseAdapter(
+      { directory: "/parent" },
+      {
+        makeWorktreeInfo: () => Effect.die(new Error("worktree bootstrap failed")),
+        createFromInfo: () => Effect.die("must not create"),
+        create: () => Effect.die("unexpected"),
+        list: () => Effect.succeed([]),
+        remove: () => Effect.succeed(true),
+        reset: () => Effect.succeed(true),
+      },
+    )
+    const adapter = createTaskSchedulerAdapter({
+      scheduler: createScheduler(sidecar),
+      worktree,
+      child: undefined as never,
+    })
+
+    const handle = await Effect.runPromise(
+      adapter.schedule({
+        brief: "work",
+        description: "work",
+        requestedTaskId: "fresh-acquisition-failure",
+        agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
+        forkMode: "none",
+        budget: { maxTurns: 1, maxTokens: 100, maxTimeMs: 1_000 },
+        background: false,
+        parent: { rootId: "ignored", taskId: "ignored", sessionID: "ses_parent" as never, messageID: "msg_parent" as never },
+      }),
+    )
+
+    expect(handle.status).toBe("waiting")
+    expect(handle.evidence.blockedReason).toContain("worktree bootstrap failed")
+    expect(sidecar.tasks.find((task) => task.task_id === "fresh-acquisition-failure")?.state).toBe("failed")
+    expect(sidecar.deliverables).toEqual([expect.objectContaining({ task_id: "fresh-acquisition-failure", status: "failed" })])
   })
 
   test("caps child supervision to the durable root child pool", async () => {

@@ -1,6 +1,7 @@
 import { Cause, Deferred, Effect, Exit, Scope } from "effect"
 import { createScheduler } from "@ultracode/agents"
 import type { SessionExecution } from "@opencode-ai/core/session/execution"
+import type { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import type { TaskSchedulerAdapter } from "@/tool/task"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { Worktree } from "@/worktree"
@@ -33,6 +34,7 @@ export interface ChildSessionBoundary {
     agent: string
     model: { readonly modelID: string; readonly providerID: string }
     toolConstraints: readonly string[]
+    permissionConstraints?: PermissionV1.Ruleset
     maxTurns?: number
     forkMode: "none" | "recent" | "full"
     parent: { readonly sessionID: string; readonly messageID: string }
@@ -58,6 +60,7 @@ export interface ChildSessionInput {
   readonly agent: string
   readonly model: { readonly modelID: string; readonly providerID: string }
   readonly toolConstraints: readonly string[]
+  readonly permissionConstraints?: PermissionV1.Ruleset
   readonly maxTurns: number
   readonly maxTokens: number
   readonly timeoutMs: number
@@ -198,6 +201,7 @@ export function createChildSessionAdapter(input: {
         agent: child.agent,
         model: child.model,
         toolConstraints: child.toolConstraints,
+        permissionConstraints: child.permissionConstraints ?? [],
         maxTurns: child.maxTurns,
         forkMode: child.forkMode,
         parent: child.parent,
@@ -284,14 +288,6 @@ export function createTaskSchedulerAdapter(input: {
       const result = terminalResult(terminal)
       const status = result.status
       const evidence = result.evidence
-      yield* Effect.promise(() =>
-        input.scheduler.useChildBudget({
-          key: `task:${state.rootId}:${state.taskId}:budget-used`,
-          rootId: state.rootId,
-          taskId: state.rootId,
-          amount: terminal.usage.tokens,
-        }),
-      )
       if (status === "cancelled") {
         const task = yield* Effect.promise(() => input.scheduler.getTask(state.rootId, state.taskId))
         if (task.state !== "cancelled") {
@@ -322,6 +318,16 @@ export function createTaskSchedulerAdapter(input: {
           manifest: evidence,
         }),
       )
+      const task = yield* Effect.promise(() => input.scheduler.getTask(state.rootId, state.taskId))
+      if (terminal.usage.tokens <= task.budget)
+        yield* Effect.promise(() =>
+          input.scheduler.reclaimChildBudget({
+            key: `task:${state.rootId}:${state.taskId}:budget-reclaimed`,
+            rootId: state.rootId,
+            taskId: state.taskId,
+            amount: task.budget - terminal.usage.tokens,
+          }),
+        )
       yield* Effect.promise(() =>
         input.scheduler.sendMailbox({
           key: `task:${state.rootId}:${state.taskId}:parent-message`,
@@ -424,7 +430,6 @@ export function createTaskSchedulerAdapter(input: {
           const failure = Cause.squash(recovered.cause)
           const reason = failure instanceof Error ? failure : new Error(String(failure))
           const worktreeID = durable.worktree_id
-          if (!recovering) return yield* Effect.fail(reason)
           const terminal = {
             status: "failed" as const,
             usage: { tokens: 0, turns: 0, elapsedMs: 0 },
@@ -490,6 +495,7 @@ export function createTaskSchedulerAdapter(input: {
           agent: request.agent.name,
           model: request.agent.model,
           toolConstraints: request.agent.toolConstraints,
+          permissionConstraints: request.agent.permissionConstraints ?? [],
           maxTurns,
           maxTokens: executionCap,
           timeoutMs,
