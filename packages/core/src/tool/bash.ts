@@ -10,6 +10,7 @@ import { FSUtil } from "../fs-util"
 import { LocationMutation } from "../location-mutation"
 import { AppProcess } from "../process"
 import { PermissionV2 } from "../permission"
+import { SandboxProcess } from "../sandbox"
 import { PositiveInt } from "../schema"
 import { ToolRegistry } from "./registry"
 import { Tool } from "./tool"
@@ -102,6 +103,7 @@ const layer = Layer.effectDiscard(
     const appProcess = yield* AppProcess.Service
     const config = yield* Config.Service
     const permission = yield* PermissionV2.Service
+    const sandbox = yield* SandboxProcess.Service
 
     yield* tools
       .register({
@@ -155,9 +157,20 @@ const layer = Layer.effectDiscard(
               const shell =
                 Object.assign({}, ...entries.flatMap((entry) => (entry.type === "document" ? [entry.info] : [])))
                   .shell ?? defaultShell()
-              const command = ChildProcess.make(input.command, [], {
+              const plan = sandbox.plan({
+                authorization: "allow",
+                profile: SandboxProcess.unconfinedProfile,
+                executable: input.command,
+                args: [],
                 cwd: target.canonical,
+                environment: process.env,
+              })
+              if (plan.outcome === "deny")
+                return yield* Effect.fail(new Error(`Sandbox denied command: ${plan.reason}`))
+              const command = ChildProcess.make(plan.executable, plan.args, {
+                cwd: plan.cwd,
                 shell,
+                env: plan.environment,
                 stdin: "ignore",
                 detached: process.platform !== "win32",
                 forceKillAfter: Duration.seconds(3),
@@ -203,5 +216,13 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "tool/bash",
   layer,
-  deps: [ToolRegistry.node, LocationMutation.node, FSUtil.node, AppProcess.node, Config.node, PermissionV2.node],
+  deps: [
+    ToolRegistry.node,
+    LocationMutation.node,
+    FSUtil.node,
+    AppProcess.node,
+    Config.node,
+    PermissionV2.node,
+    SandboxProcess.node,
+  ],
 })

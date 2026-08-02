@@ -6,6 +6,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { Pty } from "@opencode-ai/core/pty"
+import { SandboxProcess } from "@opencode-ai/core/sandbox"
 import type { PtyID } from "@opencode-ai/core/pty/schema"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { location } from "../fixture/location"
@@ -25,6 +26,19 @@ const it = testEffect(
   ]),
 )
 const ptyTest = process.platform === "win32" ? it.live.skip : it.live
+const deniedPty = testEffect(
+  AppNodeBuilder.build(LayerNode.group([Pty.node, EventV2.node]), [
+    [Config.node, configLayer],
+    [Location.node, locationLayer],
+    [
+      SandboxProcess.node,
+      Layer.succeed(
+        SandboxProcess.Service,
+        SandboxProcess.Service.of({ plan: () => ({ outcome: "deny", reason: "containment-unsupported" }) }),
+      ),
+    ],
+  ]),
+)
 
 const subscribePtyEvents = Effect.fn("PtySessionTest.subscribePtyEvents")(function* () {
   const source = yield* EventV2.Service
@@ -91,6 +105,14 @@ const waitForOutput = (output: Queue.Queue<string>, text: string) =>
   )
 
 describe("pty", () => {
+  deniedPty.effect("does not spawn when the sandbox broker denies the launch plan", () =>
+    Effect.gen(function* () {
+      const pty = yield* Pty.Service
+      const exit = yield* pty.create({ command: "cat", cwd: "/tmp" }).pipe(Effect.exit)
+      expect(Exit.isFailure(exit)).toBe(true)
+    }),
+  )
+
   it.live("returns typed not found errors for missing sessions", () =>
     Effect.gen(function* () {
       const pty = yield* Pty.Service

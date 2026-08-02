@@ -9,6 +9,7 @@ import { EventV2 } from "./event"
 import { Location } from "./location"
 import { PtyID } from "./pty/schema"
 import { Shell } from "./shell"
+import { SandboxProcess } from "./sandbox"
 import { lazy } from "./util/lazy"
 
 const BUFFER_LIMIT = 1024 * 1024 * 2
@@ -77,10 +78,14 @@ export class ExitedError extends Schema.TaggedErrorClass<ExitedError>()("Pty.Exi
   ptyID: PtyID,
 }) {}
 
+export class DeniedError extends Schema.TaggedErrorClass<DeniedError>()("Pty.DeniedError", {
+  reason: Schema.String,
+}) {}
+
 export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly get: (id: PtyID) => Effect.Effect<Info, NotFoundError>
-  readonly create: (input: CreateInput) => Effect.Effect<Info>
+  readonly create: (input: CreateInput) => Effect.Effect<Info, DeniedError>
   readonly update: (id: PtyID, input: UpdateInput) => Effect.Effect<Info, NotFoundError>
   readonly remove: (id: PtyID) => Effect.Effect<void, NotFoundError>
   readonly write: (id: PtyID, data: string) => Effect.Effect<void, NotFoundError>
@@ -95,6 +100,7 @@ const layer = Layer.effect(
     const events = yield* EventV2.Service
     const location = yield* Location.Service
     const config = yield* Config.Service
+    const sandbox = yield* SandboxProcess.Service
     const context = yield* Effect.context()
     const runFork = Effect.runForkWith(context)
     const sessions = new Map<PtyID, Active>()
@@ -178,15 +184,26 @@ const layer = Layer.effect(
         env.LC_CTYPE = "C.UTF-8"
         env.LANG = "C.UTF-8"
       }
-      yield* Effect.logInfo("creating session", { id, cmd: command, args, cwd })
+      const plan = sandbox.plan({
+        authorization: "allow",
+        profile: SandboxProcess.unconfinedProfile,
+        executable: command,
+        args,
+        cwd,
+        environment: env,
+      })
+      if (plan.outcome === "deny") return yield* new DeniedError({ reason: plan.reason })
+      yield* Effect.logInfo("creating session", { id, cmd: plan.executable, args: plan.args, cwd: plan.cwd })
       const { spawn } = yield* Effect.promise(() => pty())
-      const proc = yield* Effect.sync(() => spawn(command, args, { name: "xterm-256color", cwd, env }))
+      const proc = yield* Effect.sync(() =>
+        spawn(plan.executable, [...plan.args], { name: "xterm-256color", cwd: plan.cwd, env: { ...plan.environment } }),
+      )
       const info: Info = {
         id,
         title: input.title || `Terminal ${id.slice(-4)}`,
-        command,
-        args,
-        cwd,
+        command: plan.executable,
+        args: [...plan.args],
+        cwd: plan.cwd,
         status: "running",
         pid: proc.pid,
       }
@@ -315,4 +332,8 @@ const layer = Layer.effect(
 
 export const locationLayer = layer.pipe(Layer.provide(Config.locationLayer))
 
-export const node = makeLocationNode({ service: Service, layer, deps: [EventV2.node, Location.node, Config.node] })
+export const node = makeLocationNode({
+  service: Service,
+  layer,
+  deps: [EventV2.node, Location.node, Config.node, SandboxProcess.node],
+})

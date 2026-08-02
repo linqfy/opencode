@@ -333,6 +333,7 @@
         "@parcel/watcher": "2.5.1",
         "@silvia-odwyer/photon-node": "0.3.4",
         "@ultracode/context": "workspace:*",
+        "@ultracode/sandbox": "workspace:*",
         "@ultracode/skills": "workspace:*",
         "ai-gateway-provider": "3.1.2",
         "bun-pty": "0.4.8",
@@ -1063,6 +1064,15 @@
     },
     "packages/ultracode-memory": {
       "name": "@ultracode/memory",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+      },
+    },
+    "packages/ultracode-sandbox": {
+      "name": "@ultracode/sandbox",
       "version": "0.0.1",
       "devDependencies": {
         "@tsconfig/bun": "catalog:",
@@ -3069,6 +3079,8 @@
     "@ultracode/events-client": ["@ultracode/events-client@workspace:packages/ultracode-events-client"],
 
     "@ultracode/memory": ["@ultracode/memory@workspace:packages/ultracode-memory"],
+
+    "@ultracode/sandbox": ["@ultracode/sandbox@workspace:packages/ultracode-sandbox"],
 
     "@ultracode/schema": ["@ultracode/schema@workspace:packages/ultracode-schema"],
 

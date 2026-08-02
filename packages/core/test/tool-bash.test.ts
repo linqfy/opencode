@@ -12,6 +12,7 @@ import { Location } from "@opencode-ai/core/location"
 import { LocationMutation } from "@opencode-ai/core/location-mutation"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AppProcess } from "@opencode-ai/core/process"
+import { SandboxProcess } from "@opencode-ai/core/sandbox"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { BashTool } from "@opencode-ai/core/tool/bash"
@@ -78,6 +79,19 @@ const config = Layer.succeed(
     entries: () => Effect.succeed([]),
   }),
 )
+const sandbox = Layer.succeed(
+  SandboxProcess.Service,
+  SandboxProcess.Service.of({
+    plan: (request) => ({
+      outcome: "allow",
+      executable: request.executable,
+      args: request.args,
+      cwd: request.cwd,
+      environment: {},
+      containment: "unconfined",
+    }),
+  }),
+)
 
 const reset = () => {
   assertions.length = 0
@@ -101,6 +115,7 @@ const withTool = <A, E, R>(
   directory: string,
   body: (registry: ToolRegistry.Interface) => Effect.Effect<A, E, R>,
   processLayer: Layer.Layer<AppProcess.Service> = appProcess,
+  sandboxLayer: Layer.Layer<SandboxProcess.Service> = sandbox,
 ) => {
   const activeLocation = Layer.succeed(
     Location.Service,
@@ -116,6 +131,7 @@ const withTool = <A, E, R>(
           [Location.node, activeLocation],
           [PermissionV2.node, permission],
           [AppProcess.node, processLayer],
+          [SandboxProcess.node, sandboxLayer],
           [Config.node, config],
           [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
         ],
@@ -259,6 +275,33 @@ describe("BashTool", () => {
       ),
     )
   }
+
+  it.live("does not spawn when the sandbox broker denies an authorized command", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const denied = Layer.succeed(
+          SandboxProcess.Service,
+          SandboxProcess.Service.of({ plan: () => ({ outcome: "deny", reason: "containment-unsupported" }) }),
+        )
+        return withTool(
+          tmp.path,
+          (registry) => executeTool(registry, call({ command: "pwd" })),
+          appProcess,
+          denied,
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(assertions.map((input) => input.action)).toEqual(["bash"])
+              expect(runs).toEqual([])
+            }),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
 
   it.live("approves an explicit external workdir before bash execution", () =>
     Effect.acquireUseRelease(
