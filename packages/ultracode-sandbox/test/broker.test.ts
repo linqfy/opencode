@@ -110,6 +110,52 @@ describe("Sandbox.Broker", () => {
     expect(broker.plan(request({ profile: contained() }))).toMatchObject({ outcome: "deny", reason: "network-policy" })
   })
 
+  test("applies a broker policy veto before an explicit unconfined launch", () => {
+    const broker = Sandbox.Broker.create({
+      platform: "linux",
+      policy: () => ({ outcome: "deny", reason: "network-policy" }),
+    })
+
+    expect(broker.plan(request())).toMatchObject({ outcome: "deny", reason: "network-policy" })
+  })
+
+  test("does not treat a symlinked cwd as inside a writable root", () => {
+    const broker = Sandbox.Broker.create({
+      platform: "linux",
+      containment: () => ({ outcome: "allow" }),
+      resolvePath: (candidate) =>
+        candidate === "/workspace/link/private" ? "/outside/private" : candidate,
+    } as Sandbox.BrokerOptions)
+
+    expect(broker.plan(request({ profile: contained(), cwd: "/workspace/link/private" }))).toMatchObject({
+      outcome: "deny",
+      reason: "cwd-outside-readable-roots",
+    })
+  })
+
+  test("passes command arguments to broker policy before launch", () => {
+    const broker = Sandbox.Broker.create({
+      platform: "linux",
+      containment: () => ({ outcome: "allow" }),
+      policy: (input) =>
+        input.args.includes("--dangerous") ? { outcome: "deny", reason: "network-policy" } : { outcome: "allow" },
+    })
+
+    expect(broker.plan(request({ profile: contained(), args: ["--dangerous"] }))).toMatchObject({
+      outcome: "deny",
+      reason: "network-policy",
+    })
+  })
+
+  test("does not claim requested process containment without a backend", () => {
+    const broker = Sandbox.Broker.create({ platform: "win32" })
+
+    expect(broker.plan(request({ profile: contained({ windowsContainment: "required" }) }))).toMatchObject({
+      outcome: "deny",
+      reason: "containment-unsupported",
+    })
+  })
+
   test("permits host launch only through the explicit unconfined profile", () => {
     const broker = Sandbox.Broker.create({ platform: "linux" })
 

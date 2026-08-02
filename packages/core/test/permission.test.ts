@@ -154,6 +154,69 @@ describe("PermissionV2", () => {
     }),
   )
 
+  it.effect("does not let plugin-like wildcard rules broaden a parent profile deny", () =>
+    Effect.sync(() => {
+      const parent = profile({
+        name: "parent",
+        version: "1",
+        rules: [{ action: "bash", resource: "git push *", effect: "deny" }],
+      })
+      const pluginRules: PermissionV2.Ruleset = [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "bash", resource: "*", effect: "allow" },
+      ]
+      const narrowed = PermissionV2.mergeNarrowing(parent.rules, pluginRules)
+
+      expect(PermissionV2.evaluate("bash", "git push origin main", narrowed).effect).toBe("deny")
+    }),
+  )
+
+  it.effect("does not let an expiring grant override a later configured deny", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const service = yield* PermissionV2.Service
+      const input = assertion({ action: "bash", resources: ["git push origin main"] })
+      const { fiber, request } = yield* waitForRequest(input)
+      yield* service.reply({ requestID: request.id, reply: "session", expiresAt: Date.now() + 60_000 })
+      yield* Fiber.join(fiber)
+      expect(yield* service.ask(input)).toMatchObject({ effect: "allow" })
+
+      yield* setRules([{ action: "bash", resource: "git push *", effect: "deny" }])
+      expect(yield* service.ask(input)).toMatchObject({ effect: "deny" })
+    }),
+  )
+
+  it.effect("does not let plugin-like agent rules broaden a resolved parent profile deny", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const agents = yield* AgentV2.Service
+      yield* agents.transform((editor) =>
+        editor.update(AgentV2.ID.make("test"), (agent) => {
+          const resolved = PermissionV2.resolveProfile("child", [
+            profile({
+              name: "parent",
+              version: "1",
+              rules: [{ action: "bash", resource: "git push *", effect: "deny" }],
+            }),
+            profile({
+              name: "child",
+              version: "1",
+              parent: "parent",
+              rules: [{ action: "bash", resource: "*", effect: "allow" }],
+            }),
+          ])
+          agent.permissionProfile = resolved && { ...resolved, rules: resolved.rules.map((rule) => ({ ...rule })) }
+          agent.permissions = [{ action: "*", resource: "*", effect: "allow" }]
+        }),
+      )
+      const service = yield* PermissionV2.Service
+
+      expect(
+        yield* service.ask(assertion({ action: "bash", resources: ["git push origin main"] })),
+      ).toMatchObject({ effect: "deny" })
+    }),
+  )
+
   it.effect("returns the evaluated effect and only queues prompts", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "read", resource: "*", effect: "allow" }])
