@@ -46,10 +46,11 @@
 
 ## Stage 6 Follow-Up: Native Windows Enforcement
 
-- Implement the Windows broker backend behind `@ultracode/sandbox` using the approved dependency-closure and provenance process.
-- Add Job Object process-tree containment, restricted-token/write-root enforcement, environment filtering, and network policy enforcement.
-- Package and supervise the native broker; keep WSL and unsupported isolation profiles explicitly denied or degraded.
-- Add Windows integration coverage for child/grandchild termination, path escapes, environment stripping, and containment failure modes.
+- Complete capability-SID restricted-token enforcement with reversible ACL leases for approved writable roots; prove cleanup on launch failure, exit, termination, restart, and shutdown.
+- Bind WFP IPv4/IPv6 outbound-connect rules to the per-sandbox identity, never an executable-wide rule; ship an idempotent elevated setup path and deny network-isolated launches until it is ready.
+- Package and supervise the native broker and setup executable for CLI/Desktop; retain `ULTRACODE_SANDBOX_BROKER` only as a development override.
+- Add Windows integration coverage for allowed writes, denied outside/junction/UNC/ADS writes, environment stripping, WFP IPv4/IPv6 denial, containment cleanup, and child/grandchild termination.
+- Keep WSL, unsupported profiles, failed setup, and every unavailable containment control explicitly fail-closed.
 
 ## Runtime and Packaging
 
