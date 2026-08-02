@@ -212,16 +212,29 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("root_id")
                 .and_then(|v| v.as_str())
                 .ok_or("missing root_id")?;
-            let workspace_directory = req.params.get("workspace_directory").and_then(|v| v.as_str()).ok_or("missing workspace_directory")?;
+            let workspace_directory = req
+                .params
+                .get("workspace_directory")
+                .and_then(|v| v.as_str())
+                .ok_or("missing workspace_directory")?;
             let limit = req
                 .params
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            if !state.projections.root_matches(root_id, workspace_directory).map_err(|e| e.to_string())? {
+            if !state
+                .projections
+                .root_matches(root_id, workspace_directory)
+                .map_err(|e| e.to_string())?
+            {
                 return Ok(json!([]));
             }
-            serde_json::to_value(state.projections.list_tasks(root_id, limit).map_err(|e| e.to_string())?)
+            serde_json::to_value(
+                state
+                    .projections
+                    .list_tasks(root_id, limit)
+                    .map_err(|e| e.to_string())?,
+            )
             .map_err(|e| e.to_string())
         }
 
@@ -231,7 +244,11 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("root_id")
                 .and_then(|v| v.as_str())
                 .ok_or("missing root_id")?;
-            let workspace_directory = req.params.get("workspace_directory").and_then(|v| v.as_str()).ok_or("missing workspace_directory")?;
+            let workspace_directory = req
+                .params
+                .get("workspace_directory")
+                .and_then(|v| v.as_str())
+                .ok_or("missing workspace_directory")?;
             let recipient_task_id = req
                 .params
                 .get("recipient_task_id")
@@ -249,10 +266,19 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            if !state.projections.root_matches(root_id, workspace_directory).map_err(|e| e.to_string())? {
+            if !state
+                .projections
+                .root_matches(root_id, workspace_directory)
+                .map_err(|e| e.to_string())?
+            {
                 return Ok(json!([]));
             }
-            serde_json::to_value(state.projections.list_mailbox(root_id, recipient_task_id, after_sequence, limit).map_err(|e| e.to_string())?)
+            serde_json::to_value(
+                state
+                    .projections
+                    .list_mailbox(root_id, recipient_task_id, after_sequence, limit)
+                    .map_err(|e| e.to_string())?,
+            )
             .map_err(|e| e.to_string())
         }
 
@@ -262,23 +288,47 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
                 .get("root_id")
                 .and_then(|v| v.as_str())
                 .ok_or("missing root_id")?;
-            let workspace_directory = req.params.get("workspace_directory").and_then(|v| v.as_str()).ok_or("missing workspace_directory")?;
+            let workspace_directory = req
+                .params
+                .get("workspace_directory")
+                .and_then(|v| v.as_str())
+                .ok_or("missing workspace_directory")?;
             let limit = req
                 .params
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            if !state.projections.root_matches(root_id, workspace_directory).map_err(|e| e.to_string())? {
+            if !state
+                .projections
+                .root_matches(root_id, workspace_directory)
+                .map_err(|e| e.to_string())?
+            {
                 return Ok(json!([]));
             }
-            serde_json::to_value(state.projections.list_task_deliverables(root_id, limit).map_err(|e| e.to_string())?)
+            serde_json::to_value(
+                state
+                    .projections
+                    .list_task_deliverables(root_id, limit)
+                    .map_err(|e| e.to_string())?,
+            )
             .map_err(|e| e.to_string())
         }
 
         "list_approval_history" => {
-            let grant_scope = req.params.get("grant_scope").map(|value| value.as_str().ok_or("bad grant_scope")).transpose()?;
-            let limit = req.params.get("limit").map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?.min(200);
-            let items = state.projections.list_approval_history(grant_scope, limit).map_err(|e| e.to_string())?;
+            let grant_scope = req
+                .params
+                .get("grant_scope")
+                .map(|value| value.as_str().ok_or("bad grant_scope"))
+                .transpose()?;
+            let limit = req
+                .params
+                .get("limit")
+                .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
+                .min(200);
+            let items = state
+                .projections
+                .list_approval_history(grant_scope, limit)
+                .map_err(|e| e.to_string())?;
             Ok(json!({ "items": items }))
         }
 
@@ -611,7 +661,9 @@ fn apply_task_event(journal: &mut TaskJournal, kind: &EventKind) -> Result<(), S
             ..
         } => {
             if parent_task_id.is_none() {
-                let workspace_directory = workspace_directory.as_deref().ok_or("root workspace directory is required")?;
+                let workspace_directory = workspace_directory
+                    .as_deref()
+                    .ok_or("root workspace directory is required")?;
                 if !is_absolute_workspace(workspace_directory) {
                     return Err("root workspace directory must be absolute".into());
                 }
@@ -769,7 +821,9 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             ..
         } => {
             if parent_task_id.is_none() {
-                let workspace_directory = workspace_directory.as_deref().ok_or("root workspace directory is required")?;
+                let workspace_directory = workspace_directory
+                    .as_deref()
+                    .ok_or("root workspace directory is required")?;
                 if !is_absolute_workspace(workspace_directory) {
                     return Err("root workspace directory must be absolute".into());
                 }
@@ -1855,10 +1909,20 @@ mod tests {
         .error
         .is_none());
         assert_eq!(
-            state.projections.list_tasks("root", 10).unwrap().into_iter().find(|task| task.task_id == "child-a").unwrap().budget_reclaimed,
+            state
+                .projections
+                .list_tasks("root", 10)
+                .unwrap()
+                .into_iter()
+                .find(|task| task.task_id == "child-a")
+                .unwrap()
+                .budget_reclaimed,
             10
         );
-        state.projections.rebuild(&state.journal_dir.clone(), "ses_1").unwrap();
+        state
+            .projections
+            .rebuild(&state.journal_dir.clone(), "ses_1")
+            .unwrap();
         assert!(
             commit(&mut state, "child-b-after-reclaim", spawned("child-b"))
                 .error
@@ -2132,7 +2196,11 @@ mod tests {
         assert_eq!(
             handle_request(
                 &mut state,
-                &req(3, "list_mailbox", json!({ "root_id": "root", "workspace_directory": "C:\\workspace" }))
+                &req(
+                    3,
+                    "list_mailbox",
+                    json!({ "root_id": "root", "workspace_directory": "C:\\workspace" })
+                )
             )
             .result
             .unwrap()
@@ -2247,7 +2315,11 @@ mod tests {
         assert_eq!(
             handle_request(
                 &mut state,
-                &req(3_003, "list_tasks", json!({ "root_id": "root-bounds", "workspace_directory": "C:\\workspace" }))
+                &req(
+                    3_003,
+                    "list_tasks",
+                    json!({ "root_id": "root-bounds", "workspace_directory": "C:\\workspace" })
+                )
             )
             .result
             .unwrap()

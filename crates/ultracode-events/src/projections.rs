@@ -404,19 +404,46 @@ impl ProjectionStore {
                     )?;
                 }
             }
-            EventKind::ApprovalFinalized { approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at } => {
+            EventKind::ApprovalFinalized {
+                approval_id,
+                session_id,
+                reply,
+                decision,
+                profile,
+                profile_version,
+                grant_scope,
+                grant_resources,
+                expires_at,
+                agent,
+                turn,
+                recorded_at,
+            } => {
                 self.conn.execute(
                     "INSERT INTO approval_history (approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![approval_id, session_id, reply, decision, profile, profile_version, grant_scope, serde_json::to_string(grant_resources).map_err(|_| rusqlite::Error::InvalidParameterName("grant resources".into()))?, expires_at, agent, turn, recorded_at],
                 )?;
             }
-            EventKind::ApprovalProfileUpdated { profile, version, rules, sandbox_profile, recorded_at } => {
+            EventKind::ApprovalProfileUpdated {
+                profile,
+                version,
+                rules,
+                sandbox_profile,
+                recorded_at,
+            } => {
                 self.conn.execute(
                     "INSERT INTO approval_profiles (profile, version, rules, sandbox_profile, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(profile, version) DO NOTHING",
                     params![profile, version, serde_json::to_string(rules).map_err(|_| rusqlite::Error::InvalidParameterName("profile rules".into()))?, sandbox_profile, recorded_at],
                 )?;
             }
-            EventKind::ApprovalGrantUpdated { grant_id, scope, action, resources, session_id, expires_at, recorded_at } => {
+            EventKind::ApprovalGrantUpdated {
+                grant_id,
+                scope,
+                action,
+                resources,
+                session_id,
+                expires_at,
+                recorded_at,
+            } => {
                 self.conn.execute(
                     "INSERT INTO approval_grants (grant_id, scope, action, resources, session_id, expires_at, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(grant_id) DO NOTHING",
                     params![grant_id, scope, action, serde_json::to_string(resources).map_err(|_| rusqlite::Error::InvalidParameterName("grant resources".into()))?, session_id, expires_at, recorded_at],
@@ -894,7 +921,11 @@ impl ProjectionStore {
         rows.collect()
     }
 
-    pub fn list_approval_history(&self, grant_scope: Option<&str>, limit: u64) -> Result<Vec<ApprovalRecord>, rusqlite::Error> {
+    pub fn list_approval_history(
+        &self,
+        grant_scope: Option<&str>,
+        limit: u64,
+    ) -> Result<Vec<ApprovalRecord>, rusqlite::Error> {
         let sql = if grant_scope.is_some() {
             "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at FROM approval_history WHERE grant_scope = ?1 ORDER BY recorded_at DESC, approval_id ASC LIMIT ?2"
         } else {
@@ -903,9 +934,24 @@ impl ProjectionStore {
         let mut stmt = self.conn.prepare(sql)?;
         let map = |row: &rusqlite::Row<'_>| {
             Ok(ApprovalRecord {
-                approval_id: row.get(0)?, session_id: row.get(1)?, reply: row.get(2)?, decision: row.get(3)?, profile: row.get(4)?, profile_version: row.get(5)?, grant_scope: row.get(6)?,
-                grant_resources: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|_| rusqlite::Error::InvalidColumnType(7, "grant_resources".into(), rusqlite::types::Type::Text))?,
-                expires_at: row.get(8)?, agent: row.get(9)?, turn: row.get(10)?, recorded_at: row.get(11)?,
+                approval_id: row.get(0)?,
+                session_id: row.get(1)?,
+                reply: row.get(2)?,
+                decision: row.get(3)?,
+                profile: row.get(4)?,
+                profile_version: row.get(5)?,
+                grant_scope: row.get(6)?,
+                grant_resources: serde_json::from_str(&row.get::<_, String>(7)?).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        7,
+                        "grant_resources".into(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?,
+                expires_at: row.get(8)?,
+                agent: row.get(9)?,
+                turn: row.get(10)?,
+                recorded_at: row.get(11)?,
             })
         };
         let rows = match grant_scope {
@@ -915,7 +961,11 @@ impl ProjectionStore {
         rows.collect()
     }
 
-    pub fn root_matches(&self, root_id: &str, workspace_directory: &str) -> Result<bool, rusqlite::Error> {
+    pub fn root_matches(
+        &self,
+        root_id: &str,
+        workspace_directory: &str,
+    ) -> Result<bool, rusqlite::Error> {
         self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM task_roots WHERE root_id = ?1 AND workspace_directory = ?2)",
             params![root_id, workspace_directory],

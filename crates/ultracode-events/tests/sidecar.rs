@@ -154,9 +154,11 @@ fn task_roots_are_bound_to_their_workspace_across_rebuilds() {
 
     {
         let mut sidecar = Sidecar::spawn(&dir);
-        assert!(sidecar
-            .call(1, "propose_commit", json!({ "key": "root-a", "kind": root }))
-            ["error"]
+        assert!(sidecar.call(
+            1,
+            "propose_commit",
+            json!({ "key": "root-a", "kind": root })
+        )["error"]
             .is_null());
         let tasks = sidecar.call(
             2,
@@ -211,7 +213,10 @@ fn task_roots_are_bound_to_their_workspace_across_rebuilds() {
 fn approval_history_is_rebuildable_paged_and_scope_filtered() {
     let dir = base("approval-history");
     let mut sidecar = Sidecar::spawn(&dir);
-    for (id, scope, expires_at) in [("approval-1", "session", 1234), ("approval-2", "project", 5678)] {
+    for (id, scope, expires_at) in [
+        ("approval-1", "session", 1234),
+        ("approval-2", "project", 5678),
+    ] {
         let response = sidecar.call(
             id.as_bytes()[id.len() - 1] as u64,
             "propose_commit",

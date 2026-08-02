@@ -18,7 +18,7 @@ import {
 } from "@/server/shared/pty-ticket"
 import { Effect, Layer, Option, Queue, Schema } from "effect"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
 import { InstanceHttpApi } from "../api"
 import * as ApiError from "../errors"
@@ -38,127 +38,132 @@ const ticketScope = Effect.gen(function* () {
 // Legacy surface compatibility: before exited-session retention, sessions vanished the moment
 // their process exited. These routes preserve that observable behavior — exited sessions are
 // invisible here — while the canonical /api/pty surface exposes them until removal.
-export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handlers) =>
-  Effect.gen(function* () {
-    const tickets = yield* PtyTicket.Service
-    const cors = yield* CorsConfig
-    const plugin = yield* Plugin.Service
-    const locations = yield* LocationServiceMap.Service
-    const unregister = registerDisposer((directory) =>
-      Effect.runPromise(locations.invalidate(Location.Ref.make({ directory: AbsolutePath.make(directory) }))),
-    )
-    yield* Effect.addFinalizer(() => Effect.sync(unregister))
-
-    const pty = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
-      return yield* effect.pipe(
-        Effect.provide(
-          locations.get(Location.Ref.make({ directory: AbsolutePath.make((yield* InstanceState.context).directory) })),
-        ),
+export const ptyHandlersWithLocationServiceMap = (locations: Layer.Layer<LocationServiceMap.Service>) =>
+  HttpApiBuilder.group(InstanceHttpApi, "pty", (handlers) =>
+    Effect.gen(function* () {
+      const tickets = yield* PtyTicket.Service
+      const cors = yield* CorsConfig
+      const plugin = yield* Plugin.Service
+      const locations = yield* LocationServiceMap.Service
+      const unregister = registerDisposer((directory) =>
+        Effect.runPromise(locations.invalidate(Location.Ref.make({ directory: AbsolutePath.make(directory) }))),
       )
-    })
+      yield* Effect.addFinalizer(() => Effect.sync(unregister))
 
-    const shells = Effect.fn("PtyHttpApi.shells")(function* () {
-      return yield* Effect.promise(() => Shell.list())
-    })
+      const pty = Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
+        return yield* effect.pipe(
+          Effect.provide(
+            locations.get(
+              Location.Ref.make({ directory: AbsolutePath.make((yield* InstanceState.context).directory) }),
+            ),
+          ),
+        )
+      })
 
-    const list = Effect.fn("PtyHttpApi.list")(function* () {
-      const sessions = yield* pty(Pty.Service.use((service) => service.list()))
-      return sessions.filter((info) => info.status === "running")
-    })
+      const shells = Effect.fn("PtyHttpApi.shells")(function* () {
+        return yield* Effect.promise(() => Shell.list())
+      })
 
-    const create = Effect.fn("PtyHttpApi.create")(function* (ctx: { payload: typeof Pty.CreateInput.Type }) {
-      const cwd = ctx.payload.cwd || (yield* InstanceState.context).directory
-      const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} as Record<string, string> })
-      return yield* pty(
-        Pty.Service.use((service) =>
-          service.create({
-            ...ctx.payload,
-            args: ctx.payload.args ? [...ctx.payload.args] : undefined,
-            cwd,
-            env: { ...ctx.payload.env, ...shell.env },
-          }),
-        ),
-      )
-    })
+      const list = Effect.fn("PtyHttpApi.list")(function* () {
+        const sessions = yield* pty(Pty.Service.use((service) => service.list()))
+        return sessions.filter((info) => info.status === "running")
+      })
 
-    const get = Effect.fn("PtyHttpApi.get")(function* (ctx: { params: { ptyID: PtyID } }) {
-      return yield* pty(Pty.Service.use((service) => service.get(ctx.params.ptyID))).pipe(
-        Effect.catchTag(
-          "Pty.NotFoundError",
-          (error) =>
-            new ApiError.PtyNotFoundError({
-              ptyID: error.ptyID,
-              message: `PTY session not found: ${error.ptyID}`,
+      const create = Effect.fn("PtyHttpApi.create")(function* (ctx: { payload: typeof Pty.CreateInput.Type }) {
+        const cwd = ctx.payload.cwd || (yield* InstanceState.context).directory
+        const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} as Record<string, string> })
+        return yield* pty(
+          Pty.Service.use((service) =>
+            service.create({
+              ...ctx.payload,
+              args: ctx.payload.args ? [...ctx.payload.args] : undefined,
+              cwd,
+              env: { ...ctx.payload.env, ...shell.env },
             }),
-        ),
-        Effect.flatMap((info) =>
-          info.status === "running"
-            ? Effect.succeed(info)
-            : new ApiError.PtyNotFoundError({
-                ptyID: ctx.params.ptyID,
-                message: `PTY session not found: ${ctx.params.ptyID}`,
+          ),
+        ).pipe(Effect.catchTag("Pty.DeniedError", () => new HttpApiError.Unauthorized({})))
+      })
+
+      const get = Effect.fn("PtyHttpApi.get")(function* (ctx: { params: { ptyID: PtyID } }) {
+        return yield* pty(Pty.Service.use((service) => service.get(ctx.params.ptyID))).pipe(
+          Effect.catchTag(
+            "Pty.NotFoundError",
+            (error) =>
+              new ApiError.PtyNotFoundError({
+                ptyID: error.ptyID,
+                message: `PTY session not found: ${error.ptyID}`,
               }),
-        ),
-      )
-    })
+          ),
+          Effect.flatMap((info) =>
+            info.status === "running"
+              ? Effect.succeed(info)
+              : new ApiError.PtyNotFoundError({
+                  ptyID: ctx.params.ptyID,
+                  message: `PTY session not found: ${ctx.params.ptyID}`,
+                }),
+          ),
+        )
+      })
 
-    const update = Effect.fn("PtyHttpApi.update")(function* (ctx: {
-      params: { ptyID: PtyID }
-      payload: typeof Pty.UpdateInput.Type
-    }) {
-      yield* get(ctx)
-      return yield* pty(
-        Pty.Service.use((service) =>
-          service.update(ctx.params.ptyID, {
-            ...ctx.payload,
-            size: ctx.payload.size ? { ...ctx.payload.size } : undefined,
-          }),
-        ),
-      ).pipe(
-        Effect.catchTag(
-          "Pty.NotFoundError",
-          (error) =>
-            new ApiError.PtyNotFoundError({
-              ptyID: error.ptyID,
-              message: `PTY session not found: ${error.ptyID}`,
+      const update = Effect.fn("PtyHttpApi.update")(function* (ctx: {
+        params: { ptyID: PtyID }
+        payload: typeof Pty.UpdateInput.Type
+      }) {
+        yield* get(ctx)
+        return yield* pty(
+          Pty.Service.use((service) =>
+            service.update(ctx.params.ptyID, {
+              ...ctx.payload,
+              size: ctx.payload.size ? { ...ctx.payload.size } : undefined,
             }),
-        ),
-      )
-    })
+          ),
+        ).pipe(
+          Effect.catchTag(
+            "Pty.NotFoundError",
+            (error) =>
+              new ApiError.PtyNotFoundError({
+                ptyID: error.ptyID,
+                message: `PTY session not found: ${error.ptyID}`,
+              }),
+          ),
+        )
+      })
 
-    const remove = Effect.fn("PtyHttpApi.remove")(function* (ctx: { params: { ptyID: PtyID } }) {
-      yield* get(ctx)
-      yield* pty(Pty.Service.use((service) => service.remove(ctx.params.ptyID))).pipe(
-        Effect.catchTag(
-          "Pty.NotFoundError",
-          (error) =>
-            new ApiError.PtyNotFoundError({
-              ptyID: error.ptyID,
-              message: `PTY session not found: ${error.ptyID}`,
-            }),
-        ),
-      )
-      return true
-    })
+      const remove = Effect.fn("PtyHttpApi.remove")(function* (ctx: { params: { ptyID: PtyID } }) {
+        yield* get(ctx)
+        yield* pty(Pty.Service.use((service) => service.remove(ctx.params.ptyID))).pipe(
+          Effect.catchTag(
+            "Pty.NotFoundError",
+            (error) =>
+              new ApiError.PtyNotFoundError({
+                ptyID: error.ptyID,
+                message: `PTY session not found: ${error.ptyID}`,
+              }),
+          ),
+        )
+        return true
+      })
 
-    const connectToken = Effect.fn("PtyHttpApi.connectToken")(function* (ctx: { params: { ptyID: PtyID } }) {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      if (request.headers[PTY_CONNECT_TOKEN_HEADER] !== PTY_CONNECT_TOKEN_HEADER_VALUE || !validOrigin(request, cors))
-        return yield* new ApiError.PtyForbiddenError({ message: "Invalid PTY connect token request" })
-      yield* get(ctx)
-      return yield* tickets.issue({ ptyID: ctx.params.ptyID, ...(yield* ticketScope) })
-    })
+      const connectToken = Effect.fn("PtyHttpApi.connectToken")(function* (ctx: { params: { ptyID: PtyID } }) {
+        const request = yield* HttpServerRequest.HttpServerRequest
+        if (request.headers[PTY_CONNECT_TOKEN_HEADER] !== PTY_CONNECT_TOKEN_HEADER_VALUE || !validOrigin(request, cors))
+          return yield* new ApiError.PtyForbiddenError({ message: "Invalid PTY connect token request" })
+        yield* get(ctx)
+        return yield* tickets.issue({ ptyID: ctx.params.ptyID, ...(yield* ticketScope) })
+      })
 
-    return handlers
-      .handle("shells", shells)
-      .handle("list", list)
-      .handle("create", create)
-      .handle("get", get)
-      .handle("update", update)
-      .handle("remove", remove)
-      .handle("connectToken", connectToken)
-  }),
-).pipe(Layer.provide(locationServiceMapLayer))
+      return handlers
+        .handle("shells", shells)
+        .handle("list", list)
+        .handle("create", create)
+        .handle("get", get)
+        .handle("update", update)
+        .handle("remove", remove)
+        .handle("connectToken", connectToken)
+    }),
+  ).pipe(Layer.provide(locations))
+
+export const ptyHandlers = ptyHandlersWithLocationServiceMap(locationServiceMapLayer)
 
 export const ptyConnectHandlers = HttpApiBuilder.group(PtyConnectApi, "pty-connect", (handlers) =>
   Effect.gen(function* () {

@@ -9,6 +9,7 @@ import { mkdir } from "fs/promises"
 import { Location } from "@opencode-ai/core/location"
 import { Pty } from "@opencode-ai/core/pty"
 import { PtyTicket } from "@opencode-ai/core/pty/ticket"
+import { SandboxProcess } from "@opencode-ai/core/sandbox"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir, tmpdirScoped } from "../fixture/fixture"
@@ -53,6 +54,36 @@ const effectIt = testEffect(
   ),
 )
 
+const deniedRoutes = HttpApiApp.createRoutes(undefined, [
+  [
+    SandboxProcess.node,
+    Layer.succeed(
+      SandboxProcess.Service,
+      SandboxProcess.Service.of({ plan: () => ({ outcome: "deny", reason: "containment-unsupported" }) }),
+    ),
+  ],
+])
+
+const servedDeniedRoutes: Layer.Layer<never, EffectConfig.ConfigError, HttpServer.HttpServer> = HttpRouter.serve(
+  deniedRoutes,
+  {
+    disableListenLog: true,
+    disableLogger: true,
+  },
+)
+
+const deniedEffectIt = testEffect(
+  Layer.mergeAll(
+    testStateLayer,
+    Socket.layerWebSocketConstructorGlobal,
+    servedDeniedRoutes.pipe(
+      Layer.provide(Socket.layerWebSocketConstructorGlobal),
+      Layer.provideMerge(NodeHttpServer.layerTest),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  ),
+)
+
 const directoryHeader = (dir: string) => HttpClientRequest.setHeader("x-opencode-directory", dir)
 
 const serverUrl = () => HttpServer.HttpServer.use((server) => Effect.succeed(HttpServer.formatAddress(server.address)))
@@ -63,6 +94,33 @@ afterEach(async () => {
 })
 
 describe("v2 pty HttpApi", () => {
+  for (const [name, createPath, listPath, locationWrapped, preservesReason] of [
+    ["canonical", "/api/pty", "/api/pty", true, true],
+    ["legacy", "/pty", "/pty", false, false],
+  ] as const) {
+    deniedEffectIt.live(
+      `maps denied ${name} PTY launches to unauthorized responses without creating sessions`,
+      () =>
+        Effect.gen(function* () {
+          const directory = yield* tmpdirScoped({ git: true, config: { formatter: false, lsp: false } })
+          const denied = yield* HttpClientRequest.post(createPath).pipe(
+            directoryHeader(directory),
+            HttpClientRequest.bodyJson({ command: "/bin/sh" }),
+            Effect.flatMap(HttpClient.execute),
+          )
+          expect(denied.status).toBe(401)
+          if (preservesReason)
+            expect(yield* denied.json).toEqual({ _tag: "UnauthorizedError", message: "containment-unsupported" })
+          else expect(yield* denied.text).toBe("")
+
+          const sessions = yield* HttpClientRequest.get(listPath).pipe(directoryHeader(directory), HttpClient.execute)
+          expect(sessions.status).toBe(200)
+          expect(yield* sessions.json).toEqual(locationWrapped ? expect.objectContaining({ data: [] }) : [])
+        }),
+      { timeout: 15_000 },
+    )
+  }
+
   testPty("serves location-wrapped PTY routes and retains exited sessions", async () => {
     await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
 

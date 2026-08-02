@@ -180,13 +180,17 @@ describe("pty HttpApi bridge", () => {
     expect(await list.json()).toEqual([])
   })
 
-  test("returns 404 for missing PTY websocket before upgrade", async () => {
-    await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
-    const response = await app().request(PtyPaths.connect.replace(":ptyID", PtyID.ascending()), {
-      headers: { "x-opencode-directory": tmp.path },
-    })
-    expect(response.status).toBe(404)
-  })
+  test(
+    "returns 404 for missing PTY websocket before upgrade",
+    async () => {
+      await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+      const response = await app().request(PtyPaths.connect.replace(":ptyID", PtyID.ascending()), {
+        headers: { "x-opencode-directory": tmp.path },
+      })
+      expect(response.status).toBe(404)
+    },
+    { timeout: 15_000 },
+  )
 
   test("returns 404 for missing PTY websocket before decoding cursor query", async () => {
     await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })

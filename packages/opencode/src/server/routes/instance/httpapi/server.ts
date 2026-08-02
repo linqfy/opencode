@@ -94,7 +94,7 @@ import { permissionHandlers } from "./handlers/permission"
 import { projectHandlers } from "./handlers/project"
 import { projectCopyHandlers } from "./handlers/project-copy"
 import { providerHandlers } from "./handlers/provider"
-import { ptyConnectHandlers, ptyHandlers } from "./handlers/pty"
+import { ptyConnectHandlers, ptyHandlers, ptyHandlersWithLocationServiceMap } from "./handlers/pty"
 import { questionHandlers } from "./handlers/question"
 import { sessionHandlers } from "./handlers/session"
 import { syncHandlers } from "./handlers/sync"
@@ -151,27 +151,28 @@ const ptyConnectApiRoutes = HttpApiBuilder.layer(PtyConnectApi).pipe(
   Layer.provide(ptyConnectHandlers),
   Layer.provide([ptyConnectHttpApiAuthLayer, workspaceRoutingLive, instanceContextLayer]),
 )
-const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
-  Layer.provide([
-    configHandlers,
-    experimentalHandlers,
-    fileHandlers,
-    instanceHandlers,
-    mcpHandlers,
-    projectHandlers,
-    projectCopyHandlers,
-    ptyHandlers,
-    questionHandlers,
-    permissionHandlers,
-    providerHandlers,
-    sessionHandlers,
-    syncHandlers,
-    tuiHandlers,
-    workspaceHandlers,
-  ]),
-)
+const instanceApiRoutes = (pty = ptyHandlers) =>
+  HttpApiBuilder.layer(InstanceHttpApi).pipe(
+    Layer.provide([
+      configHandlers,
+      experimentalHandlers,
+      fileHandlers,
+      instanceHandlers,
+      mcpHandlers,
+      projectHandlers,
+      projectCopyHandlers,
+      pty,
+      questionHandlers,
+      permissionHandlers,
+      providerHandlers,
+      sessionHandlers,
+      syncHandlers,
+      tuiHandlers,
+      workspaceHandlers,
+    ]),
+  )
 
-const instanceRoutes = instanceApiRoutes.pipe(
+const instanceRoutes = instanceApiRoutes().pipe(
   Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
 )
 const serverRoutes = HttpApiBuilder.layer(Api).pipe(
@@ -270,14 +271,19 @@ const app = LayerNode.group([
 
 export function createRoutes(
   corsOptions?: CorsOptions,
+  replacements: LayerNode.Replacements = [],
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
-  const locationServiceMapV2 = buildLocationServiceMap()
+  const locationServiceMapV2 = buildLocationServiceMap(replacements)
 
   return Layer.mergeAll(
     rootApiRoutes,
     eventApiRoutes,
     ptyConnectApiRoutes,
-    instanceRoutes,
+    replacements.length === 0
+      ? instanceRoutes
+      : instanceApiRoutes(ptyHandlersWithLocationServiceMap(locationServiceMapV2)).pipe(
+          Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
+        ),
     serverRoutes,
     docRoute,
     uiRoute,
@@ -288,7 +294,7 @@ export function createRoutes(
       corsVaryFix,
       fenceLayer,
       cors(corsOptions),
-      AppNodeBuilderV1.build(MoveSession.node, [[LocationServiceMap.node, locationServiceMapV2]]),
+      AppNodeBuilderV1.build(MoveSession.node, [[LocationServiceMap.node, locationServiceMapV2], ...replacements]),
       HttpServer.layerServices,
     ]),
     Layer.provide(Layer.succeed(CorsConfig)(corsOptions)),
@@ -299,11 +305,12 @@ export function createRoutes(
       AppNodeBuilderV1.build(SessionV2.node, [
         [LocationServiceMap.node, locationServiceMapV2],
         [SessionExecution.node, SessionExecutionLocal.node],
+        ...replacements,
       ]),
     ),
     Layer.provide(locationServiceMapV2),
 
-    Layer.provide(AppNodeBuilderV1.build(app)),
+    Layer.provide(AppNodeBuilderV1.build(app, replacements)),
     // Must stay last: layers provided later in this pipe build beneath earlier ones,
     // so Observability must come after every service graph. Otherwise eagerly forked
     // fibers (e.g. the ModelsDev background refresh) capture Effect's default stdout

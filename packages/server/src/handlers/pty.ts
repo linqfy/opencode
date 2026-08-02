@@ -8,7 +8,7 @@ import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
 import { Api } from "../api"
 import { CorsConfig, isAllowedRequestOrigin } from "../cors"
-import { ForbiddenError, PtyNotFoundError } from "@opencode-ai/protocol/errors"
+import { ForbiddenError, PtyNotFoundError, UnauthorizedError } from "@opencode-ai/protocol/errors"
 import {
   PTY_CONNECT_TICKET_QUERY,
   PTY_CONNECT_TOKEN_HEADER,
@@ -42,15 +42,17 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
           const location = yield* Location.Service
           const cwd = ctx.payload.cwd || location.directory
           return yield* response(
-            pty.create({
-              ...ctx.payload,
-              args: ctx.payload.args ? [...ctx.payload.args] : undefined,
-              cwd,
-              env: {
-                ...ctx.payload.env,
-                ...(yield* environment.get({ directory: location.directory, cwd })),
-              },
-            }),
+            pty
+              .create({
+                ...ctx.payload,
+                args: ctx.payload.args ? [...ctx.payload.args] : undefined,
+                cwd,
+                env: {
+                  ...ctx.payload.env,
+                  ...(yield* environment.get({ directory: location.directory, cwd })),
+                },
+              })
+              .pipe(Effect.catchTag("Pty.DeniedError", (error) => new UnauthorizedError({ message: error.reason }))),
           )
         }),
       )
