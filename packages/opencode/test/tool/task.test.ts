@@ -72,6 +72,7 @@ function adapter(overrides: Partial<TaskSchedulerAdapter.Handle> = {}) {
       Effect.sync(() => {
         scheduled.push(input)
         return {
+          rootId: "root_parent",
           taskId: "task_child",
           status: "completed",
           summary: "Cache key inspected",
@@ -79,7 +80,7 @@ function adapter(overrides: Partial<TaskSchedulerAdapter.Handle> = {}) {
           ...overrides,
         }
       }),
-    cancel: (input) => Effect.sync(() => void cancelled.push(input)),
+    cancel: (input) => Effect.sync(() => (cancelled.push(input), { state: "cancellation_pending" as const })),
   }
   return { service, scheduled, cancelled }
 }
@@ -125,7 +126,6 @@ describe("tool.task", () => {
           agent: { name: "general", model: ref, toolConstraints: [] },
           forkMode: "recent",
           budget: { maxTurns: undefined },
-          stateChanging: false,
           background: false,
           requestedTaskId: "task_resume",
           parent: expect.objectContaining({
@@ -185,7 +185,7 @@ describe("tool.task", () => {
       abort.abort()
       yield* Effect.promise(() => Promise.resolve())
 
-      expect(fake.cancelled).toEqual([{ rootId: chat.id, taskId: "task_child", reason: "parent aborted" }])
+      expect(fake.cancelled).toEqual([{ rootId: "root_parent", taskId: "task_child", reason: "parent aborted" }])
     }),
   )
 
@@ -198,7 +198,7 @@ describe("tool.task", () => {
           { description: "inspect cache", prompt: "inspect", subagent_type: "general" },
           context(chat, assistant, {
             schedule: () => Effect.die(new Error("scheduler unavailable")),
-            cancel: () => Effect.void,
+            cancel: () => Effect.succeed({ state: "cancellation_pending" as const }),
           }),
         )
         .pipe(Effect.exit)

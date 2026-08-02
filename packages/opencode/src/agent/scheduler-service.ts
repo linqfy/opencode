@@ -30,7 +30,6 @@ type Runtime = {
   readonly worktree: Worktree.Interface
   readonly session: ChildSessionBoundary
   readonly execution: ChildExecutionBoundary
-  readonly taskId: () => string
 }
 
 export interface Interface {
@@ -93,7 +92,6 @@ export const layerWith = (input: {
                     session: input.runtime.session,
                     execution: input.runtime.execution,
                   }),
-                  taskId: input.runtime.taskId,
                 }),
               ),
             ),
@@ -135,7 +133,12 @@ export const layer = Layer.unwrap(
             Effect.context<never>().pipe(
               Effect.flatMap((context) =>
                 (Context.get(context as never, SessionV2.Service) as SessionV2.Interface)
-                  .create({ id: SessionSchema.ID.make(input.id), location: input.location as never })
+                  .create({
+                    id: SessionSchema.ID.make(input.id),
+                    location: input.location as never,
+                    agent: input.agent as never,
+                    model: input.model as never,
+                  })
                   .pipe(
                     Effect.map((value) => ({ id: value.id })),
                     Effect.orDie,
@@ -174,7 +177,6 @@ export const layer = Layer.unwrap(
               ),
             ),
         },
-        taskId: () => SessionSchema.ID.create(),
       },
     })
   }),

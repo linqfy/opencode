@@ -17,7 +17,11 @@ export interface TaskPromptOps {
 
 export interface TaskSchedulerAdapter {
   schedule(input: TaskSchedulerAdapter.Input): Effect.Effect<TaskSchedulerAdapter.Handle, Error>
-  cancel(input: { rootId: string; taskId: string; reason: string }): Effect.Effect<void, Error>
+  cancel(input: {
+    rootId: string
+    taskId: string
+    reason: string
+  }): Effect.Effect<TaskSchedulerAdapter.Cancellation, Error>
 }
 
 export namespace TaskSchedulerAdapter {
@@ -31,7 +35,6 @@ export namespace TaskSchedulerAdapter {
     }
     readonly forkMode: ForkMode
     readonly budget: { readonly maxTurns?: number; readonly maxTokens?: number; readonly maxTimeMs?: number }
-    readonly stateChanging: boolean
     readonly background: boolean
     readonly requestedTaskId?: string
     readonly parent: {
@@ -51,10 +54,15 @@ export namespace TaskSchedulerAdapter {
   }
 
   export interface Handle {
+    readonly rootId: string
     readonly taskId: string
     readonly status: "pending" | "running" | "waiting" | "completed"
     readonly summary: string
     readonly evidence: Evidence
+  }
+
+  export interface Cancellation {
+    readonly state: "cancelled" | "cancellation_pending"
   }
 }
 
@@ -135,10 +143,9 @@ export const TaskTool = Tool.define(
       const handle = yield* scheduler.schedule({
         brief: params.prompt,
         description: params.description,
-        agent: { name: next.name, model, toolConstraints: [] },
+        agent: { name: next.name, model, toolConstraints: selectedTools(next.options.tools) },
         forkMode: params.task_id ? "recent" : "none",
         budget: { maxTurns: next.steps },
-        stateChanging: false,
         background: runInBackground,
         ...(params.task_id ? { requestedTaskId: params.task_id } : {}),
         parent: {
@@ -158,7 +165,7 @@ export const TaskTool = Tool.define(
       }
       yield* ctx.metadata({ title: params.description, metadata })
 
-      const cancel = () => scheduler.cancel({ rootId: ctx.sessionID, taskId: handle.taskId, reason: "parent aborted" })
+      const cancel = () => scheduler.cancel({ rootId: handle.rootId, taskId: handle.taskId, reason: "parent aborted" })
       const onAbort = () => void Effect.runFork(cancel())
       ctx.abort.addEventListener("abort", onAbort, { once: true })
       return { title: params.description, metadata, output: renderOutput(handle) }
@@ -175,3 +182,8 @@ export const TaskTool = Tool.define(
     }
   }),
 )
+
+function selectedTools(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return []
+  return value
+}

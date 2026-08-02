@@ -89,6 +89,7 @@ export function createScheduler(client: SchedulerEventClient) {
       const tasks = await client.listTasks(rootId, EVIDENCE_LIMIT)
       const candidate = tasks.find((task) => task.task_id === taskId)
       if (!candidate) throw new Error(`unknown task: ${taskId}`)
+      if (candidate.state === "running") return
       if (candidate.state !== "pending") throw new Error("invalid_transition")
       const admission = admitTask(toTask(candidate), tasks.filter((task) => task.task_id !== taskId).map(toTask))
       if (!admission.ok) throw new Error(admission.error)
@@ -104,6 +105,18 @@ export function createScheduler(client: SchedulerEventClient) {
       await client.proposeCommit(key, {
         kind: "task-cancellation-observed",
         data: { root_id: rootId, task_id: taskId },
+      })
+    },
+    leaseWorktree: async (rootId: string, taskId: string, worktreeId: string, key: string) => {
+      await client.proposeCommit(key, {
+        kind: "worktree-leased",
+        data: { root_id: rootId, task_id: taskId, worktree_id: worktreeId },
+      })
+    },
+    releaseWorktree: async (rootId: string, taskId: string, worktreeId: string, key: string) => {
+      await client.proposeCommit(key, {
+        kind: "worktree-released",
+        data: { root_id: rootId, task_id: taskId, worktree_id: worktreeId },
       })
     },
     sendMailbox: async (input: MailboxInput) => {

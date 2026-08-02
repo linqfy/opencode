@@ -20,7 +20,6 @@ const runtime = {
     wake: () => Effect.die("unexpected"),
     interrupt: () => Effect.die("unexpected"),
   },
-  taskId: () => "task",
 }
 
 describe("SchedulerService", () => {
