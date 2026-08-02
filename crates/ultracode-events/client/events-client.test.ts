@@ -141,7 +141,16 @@ describe("EventsClient", () => {
   test("sidecar client exposes root-scoped task queries", async () => {
     await client.proposeCommit("task-root", {
       kind: "task-spawned",
-      data: { root_id: "root-client", task_id: "task-client", parent_task_id: null, depth: 0, state_changing: true, dependencies: [], budget: 10 },
+      data: {
+        root_id: "root-client",
+        task_id: "task-client",
+        parent_task_id: null,
+        depth: 0,
+        state_changing: true,
+        dependencies: [],
+        budget: 10,
+        workspace_directory: "C:\\workspace",
+      },
     })
     await client.proposeCommit("task-child", {
       kind: "task-spawned",
@@ -163,8 +172,8 @@ describe("EventsClient", () => {
       kind: "task-deliverable-committed", data: { root_id: "root-client", task_id: "task-client", status: "completed", summary: "done", artifact_ids: [], changed_paths: [], test_summary: null },
     })
 
-    expect(await client.listTasks("root-client")).toHaveLength(2)
-    expect(await client.listMailbox("root-client", "task-child")).toEqual([
+    expect(await client.listTasks("root-client", "C:\\workspace")).toHaveLength(2)
+    expect(await client.listMailbox("root-client", "C:\\workspace", "task-child")).toEqual([
       expect.objectContaining({
         summary: "child completed the task",
         artifact_ids: ["art-client"],
@@ -173,6 +182,6 @@ describe("EventsClient", () => {
         blocked_reason: null,
       }),
     ])
-    expect(await client.listTaskDeliverables("root-client")).toHaveLength(1)
+    expect(await client.listTaskDeliverables("root-client", "C:\\workspace")).toHaveLength(1)
   })
 })

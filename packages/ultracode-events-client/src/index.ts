@@ -77,6 +77,23 @@ export type TaskDeliverable = {
   changed_paths: string[]
   test_summary: string | null
 }
+export type ApprovalRecord = {
+  approval_id: string
+  session_id: string
+  reply: string
+  decision: string
+  profile: string | null
+  profile_version: string | null
+  grant_scope: string | null
+  grant_resources: string[]
+  expires_at: number | null
+  agent: string | null
+  turn: string | null
+  recorded_at: number
+  workspace_directory: string
+  project_id: string
+}
+export type ApprovalHistoryPage = { items: ApprovalRecord[]; next_cursor: string | null }
 
 type StreamRead = { done: true; value?: never } | { done: false; value: Uint8Array }
 
@@ -183,6 +200,19 @@ export class EventsClient {
   }
   async listTaskDeliverables(rootId: string, workspaceDirectory: string, limit = 100): Promise<TaskDeliverable[]> {
     return this.call("list_task_deliverables", { root_id: rootId, workspace_directory: workspaceDirectory, limit })
+  }
+  async listApprovalHistory(
+    workspaceDirectory: string,
+    projectId?: string,
+    cursor?: string,
+    limit = 100,
+  ): Promise<ApprovalHistoryPage> {
+    return this.call("list_approval_history", {
+      workspace_directory: workspaceDirectory,
+      ...(projectId === undefined ? {} : { project_id: projectId }),
+      ...(cursor === undefined ? {} : { cursor }),
+      limit,
+    })
   }
   async listMemoryRecords(limit = 200): Promise<MemoryRecord[]> {
     return this.call("list_memory_records", { limit })

@@ -183,7 +183,7 @@ const layer = Layer.effect(
       agentID?: AgentV2.ID,
     ) {
       const session = yield* sessions.get(sessionID)
-      if (!session) return yield* new SessionV2.NotFoundError({ sessionID })
+      if (!session) return yield* EffectRuntime.die(`Permission session disappeared before finalization: ${sessionID}`)
       const agent = yield* agents.resolve(agentID ?? session.agent)
       const profile = agent?.permissionProfile
       return {
@@ -261,6 +261,12 @@ const layer = Layer.effect(
       }
     }
 
+    const finalizedScope = EffectRuntime.fn("PermissionV2.finalizedScope")(function* (sessionID: SessionV2.ID) {
+      const session = yield* sessions.get(sessionID)
+      if (!session) throw new Error(`Permission session disappeared before finalization: ${sessionID}`)
+      return { workspaceDirectory: session.location.directory, projectID: session.projectID }
+    })
+
     const create = (request: Request, agent?: AgentV2.ID) =>
       EffectRuntime.uninterruptible(
         EffectRuntime.gen(function* () {
@@ -312,6 +318,7 @@ const layer = Layer.effect(
           const existing = pending.get(input.requestID)
           if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
           const decision = finalizedDecision(existing.request)
+          const scope = yield* finalizedScope(existing.request.sessionID)
 
           if (input.reply === "reject") {
             yield* events.publish(Event.Replied, {
@@ -319,6 +326,7 @@ const layer = Layer.effect(
               requestID: existing.request.id,
               reply: input.reply,
               decision,
+              ...scope,
             })
             yield* Deferred.fail(
               existing.deferred,
@@ -327,11 +335,13 @@ const layer = Layer.effect(
             pending.delete(input.requestID)
             for (const [id, item] of pending) {
               if (item.request.sessionID !== existing.request.sessionID) continue
+              const itemScope = yield* finalizedScope(item.request.sessionID)
               yield* events.publish(Event.Replied, {
                 sessionID: item.request.sessionID,
                 requestID: item.request.id,
                 reply: "reject",
                 decision: finalizedDecision(item.request),
+                ...itemScope,
               })
               yield* Deferred.fail(item.deferred, new DeclinedError())
               pending.delete(id)
@@ -367,6 +377,7 @@ const layer = Layer.effect(
             reply: input.reply,
             decision,
             grant,
+            ...scope,
           })
           if (input.idempotencyKey) replies.set(input.idempotencyKey, input)
           yield* Deferred.succeed(existing.deferred, undefined)
@@ -376,10 +387,7 @@ const layer = Layer.effect(
           const rememberedRules = yield* savedRules()
           for (const [id, item] of pending) {
             const input = { ...item.request }
-            const configuredRuleset = yield* configured(item.request.sessionID, item.agent).pipe(
-              EffectRuntime.catchTag("Session.NotFoundError", () => EffectRuntime.succeed(undefined)),
-            )
-            if (!configuredRuleset) continue
+            const configuredRuleset = yield* configured(item.request.sessionID, item.agent)
             const rules = configuredRuleset.rules
             if (denied(input, rules)) continue
             const effective = [...rules, ...rememberedRules]
@@ -389,11 +397,13 @@ const layer = Layer.effect(
               )
             )
               continue
+            const itemScope = yield* finalizedScope(item.request.sessionID)
               yield* events.publish(Event.Replied, {
                 sessionID: item.request.sessionID,
                 requestID: item.request.id,
                 reply: "always",
                 decision: finalizedDecision(item.request),
+                ...itemScope,
               })
             yield* Deferred.succeed(item.deferred, undefined)
             pending.delete(id)

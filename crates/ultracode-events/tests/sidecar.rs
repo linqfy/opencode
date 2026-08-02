@@ -236,7 +236,9 @@ fn approval_history_is_rebuildable_paged_and_scope_filtered() {
                         "expires_at": expires_at,
                         "agent": "test",
                         "turn": "turn_1",
-                        "recorded_at": 100
+                        "recorded_at": 100,
+                        "workspace_directory": "C:\\workspace",
+                        "project_id": "project"
                     }
                 }
             }),
@@ -246,7 +248,7 @@ fn approval_history_is_rebuildable_paged_and_scope_filtered() {
     let page = sidecar.call(
         3,
         "list_approval_history",
-        json!({ "grant_scope": "session", "limit": 1 }),
+        json!({ "workspace_directory": "C:\\workspace", "project_id": "project", "limit": 1 }),
     );
     assert_eq!(page["result"]["items"].as_array().unwrap().len(), 1);
     assert_eq!(page["result"]["items"][0]["expires_at"], 1234);
@@ -254,8 +256,122 @@ fn approval_history_is_rebuildable_paged_and_scope_filtered() {
     sidecar.kill();
 
     let mut restarted = Sidecar::spawn(&dir);
-    let history = restarted.call(1, "list_approval_history", json!({ "limit": 10 }));
+    let history = restarted.call(
+        1,
+        "list_approval_history",
+        json!({ "workspace_directory": "C:\\workspace", "limit": 10 }),
+    );
     assert_eq!(history["result"]["items"].as_array().unwrap().len(), 2);
     restarted.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn approval_audit_requires_authoritative_scope_and_keeps_same_ids_isolated() {
+    let dir = base("approval-scope-authority");
+    let mut sidecar = Sidecar::spawn(&dir);
+    let missing = sidecar.call(
+        1,
+        "propose_commit",
+        json!({
+            "key": "missing-scope",
+            "kind": { "kind": "approval-finalized", "data": {
+                "approval_id": "same", "session_id": "ses-a", "reply": "session", "decision": "allow",
+                "grant_resources": [], "recorded_at": 1
+            }}
+        }),
+    );
+    assert_eq!(missing["error"], "approval audit scope is required");
+
+    for (key, workspace, project, recorded_at) in [
+        ("approval-a", "C:\\workspace-a", "project-a", 2),
+        ("approval-b", "C:\\workspace-b", "project-b", 1),
+        ("approval-c", "C:\\workspace-a", "project-a", 1),
+    ] {
+        let response = sidecar.call(
+            recorded_at + 10,
+            "propose_commit",
+            json!({ "key": key, "kind": { "kind": "approval-finalized", "data": {
+                "approval_id": if key == "approval-c" { "other" } else { "same" }, "session_id": key, "reply": "session", "decision": "allow",
+                "grant_resources": [], "workspace_directory": workspace, "project_id": project,
+                "recorded_at": recorded_at
+            }}}),
+        );
+        assert!(response["error"].is_null(), "{response}");
+    }
+
+    let first = sidecar.call(
+        20,
+        "list_approval_history",
+        json!({
+            "workspace_directory": "C:\\workspace-a", "limit": 1
+        }),
+    );
+    assert_eq!(first["result"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["result"]["items"][0]["recorded_at"], 2);
+    let cursor = first["result"]["next_cursor"].as_str().unwrap();
+    let second = sidecar.call(
+        21,
+        "list_approval_history",
+        json!({
+            "workspace_directory": "C:\\workspace-a", "cursor": cursor, "limit": 1
+        }),
+    );
+    assert_eq!(
+        second["result"]["items"].as_array().unwrap().len(),
+        1,
+        "{second}"
+    );
+    assert_eq!(second["result"]["items"][0]["recorded_at"], 1);
+    let mismatch = sidecar.call(
+        22,
+        "list_approval_history",
+        json!({
+            "workspace_directory": "C:\\workspace-b", "project_id": "project-a", "limit": 10
+        }),
+    );
+    assert_eq!(mismatch["result"]["items"], json!([]));
+    sidecar.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn legacy_unscoped_approval_audit_rows_are_not_queryable() {
+    let dir = base("approval-legacy");
+    {
+        let mut commit =
+            ultracode_events::commit::CommitLog::open(&dir.join("journal"), "ses_1").unwrap();
+        commit
+            .propose(
+                "legacy-approval",
+                ultracode_events::event::EventKind::ApprovalFinalized {
+                    approval_id: "legacy".into(),
+                    session_id: "ses_legacy".into(),
+                    reply: "session".into(),
+                    decision: "allow".into(),
+                    profile: None,
+                    profile_version: None,
+                    grant_scope: None,
+                    grant_resources: vec![],
+                    expires_at: None,
+                    agent: None,
+                    turn: None,
+                    recorded_at: 1,
+                    workspace_directory: None,
+                    project_id: None,
+                },
+            )
+            .unwrap();
+    }
+    let mut sidecar = Sidecar::spawn(&dir);
+    let history = sidecar.call(
+        1,
+        "list_approval_history",
+        json!({
+            "workspace_directory": "C:\\workspace", "limit": 10
+        }),
+    );
+    assert_eq!(history["result"]["items"], json!([]));
+    sidecar.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }

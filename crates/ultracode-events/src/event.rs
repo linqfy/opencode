@@ -207,6 +207,12 @@ pub enum EventKind {
         agent: Option<String>,
         turn: Option<String>,
         recorded_at: u64,
+        /// Optional only for journal compatibility. New proposals are
+        /// rejected unless both scope fields are present and valid.
+        #[serde(default)]
+        workspace_directory: Option<String>,
+        #[serde(default)]
+        project_id: Option<String>,
     },
     ApprovalProfileUpdated {
         profile: String,

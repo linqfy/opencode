@@ -86,6 +86,8 @@ pub struct ApprovalRecord {
     pub agent: Option<String>,
     pub turn: Option<String>,
     pub recorded_at: u64,
+    pub workspace_directory: Option<String>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -205,9 +207,11 @@ impl ProjectionStore {
                     PRIMARY KEY(root_id, task_id)
                );
                CREATE TABLE IF NOT EXISTS approval_history (
-                   approval_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, reply TEXT NOT NULL, decision TEXT NOT NULL,
+                   approval_id TEXT NOT NULL, session_id TEXT NOT NULL, reply TEXT NOT NULL, decision TEXT NOT NULL,
                    profile TEXT, profile_version TEXT, grant_scope TEXT, grant_resources TEXT NOT NULL,
-                   expires_at INTEGER, agent TEXT, turn TEXT, recorded_at INTEGER NOT NULL
+                   expires_at INTEGER, agent TEXT, turn TEXT, recorded_at INTEGER NOT NULL,
+                   workspace_directory TEXT, project_id TEXT,
+                   PRIMARY KEY(approval_id, workspace_directory, project_id)
                );
                CREATE INDEX IF NOT EXISTS idx_approval_history_scope_time ON approval_history(grant_scope, recorded_at DESC, approval_id ASC);
                CREATE TABLE IF NOT EXISTS approval_profiles (
@@ -218,6 +222,40 @@ impl ProjectionStore {
                    grant_id TEXT PRIMARY KEY, scope TEXT NOT NULL, action TEXT NOT NULL, resources TEXT NOT NULL,
                    session_id TEXT, expires_at INTEGER, recorded_at INTEGER NOT NULL
                );",
+        )?;
+        let approval_columns = {
+            let mut statement = conn.prepare("PRAGMA table_info(approval_history)")?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        if !approval_columns
+            .iter()
+            .any(|column| column == "workspace_directory")
+        {
+            conn.execute_batch(
+                "DROP INDEX IF EXISTS idx_approval_history_scope_time;
+                 ALTER TABLE approval_history RENAME TO approval_history_legacy;
+                 CREATE TABLE approval_history (
+                     approval_id TEXT NOT NULL, session_id TEXT NOT NULL, reply TEXT NOT NULL, decision TEXT NOT NULL,
+                     profile TEXT, profile_version TEXT, grant_scope TEXT, grant_resources TEXT NOT NULL,
+                     expires_at INTEGER, agent TEXT, turn TEXT, recorded_at INTEGER NOT NULL,
+                     workspace_directory TEXT, project_id TEXT,
+                     PRIMARY KEY(approval_id, workspace_directory, project_id)
+                 );
+                 INSERT INTO approval_history
+                     (approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources,
+                      expires_at, agent, turn, recorded_at, workspace_directory, project_id)
+                 SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources,
+                        expires_at, agent, turn, recorded_at, NULL, NULL
+                 FROM approval_history_legacy;
+                 DROP TABLE approval_history_legacy;"
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_approval_history_scope_time
+             ON approval_history(workspace_directory, project_id, recorded_at DESC, approval_id ASC);"
         )?;
         let has_failure_reason = {
             let mut statement = conn.prepare("PRAGMA table_info(memory_jobs)")?;
@@ -417,10 +455,12 @@ impl ProjectionStore {
                 agent,
                 turn,
                 recorded_at,
+                workspace_directory,
+                project_id,
             } => {
                 self.conn.execute(
-                    "INSERT INTO approval_history (approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                    params![approval_id, session_id, reply, decision, profile, profile_version, grant_scope, serde_json::to_string(grant_resources).map_err(|_| rusqlite::Error::InvalidParameterName("grant resources".into()))?, expires_at, agent, turn, recorded_at],
+                    "INSERT INTO approval_history (approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at, workspace_directory, project_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    params![approval_id, session_id, reply, decision, profile, profile_version, grant_scope, serde_json::to_string(grant_resources).map_err(|_| rusqlite::Error::InvalidParameterName("grant resources".into()))?, expires_at, agent, turn, recorded_at, workspace_directory, project_id],
                 )?;
             }
             EventKind::ApprovalProfileUpdated {
@@ -923,15 +963,25 @@ impl ProjectionStore {
 
     pub fn list_approval_history(
         &self,
-        grant_scope: Option<&str>,
+        workspace_directory: &str,
+        project_id: Option<&str>,
+        cursor: Option<&str>,
         limit: u64,
-    ) -> Result<Vec<ApprovalRecord>, rusqlite::Error> {
-        let sql = if grant_scope.is_some() {
-            "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at FROM approval_history WHERE grant_scope = ?1 ORDER BY recorded_at DESC, approval_id ASC LIMIT ?2"
-        } else {
-            "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources, expires_at, agent, turn, recorded_at FROM approval_history ORDER BY recorded_at DESC, approval_id ASC LIMIT ?1"
-        };
-        let mut stmt = self.conn.prepare(sql)?;
+    ) -> Result<(Vec<ApprovalRecord>, Option<String>), rusqlite::Error> {
+        let cursor = cursor
+            .and_then(|value| serde_json::from_str::<(u64, String, String, String)>(value).ok());
+        let mut stmt = self.conn.prepare(
+            "SELECT approval_id, session_id, reply, decision, profile, profile_version, grant_scope, grant_resources,
+                    expires_at, agent, turn, recorded_at, workspace_directory, project_id
+             FROM approval_history
+             WHERE workspace_directory = ?1 AND (?2 IS NULL OR project_id = ?2)
+               AND (?3 IS NULL OR recorded_at < ?3 OR
+                    (recorded_at = ?3 AND (approval_id > ?4 OR
+                     (approval_id = ?4 AND workspace_directory > ?5) OR
+                     (approval_id = ?4 AND workspace_directory = ?5 AND project_id > ?6))))
+             ORDER BY recorded_at DESC, approval_id ASC, workspace_directory ASC, project_id ASC
+             LIMIT ?7"
+        )?;
         let map = |row: &rusqlite::Row<'_>| {
             Ok(ApprovalRecord {
                 approval_id: row.get(0)?,
@@ -952,13 +1002,39 @@ impl ProjectionStore {
                 agent: row.get(9)?,
                 turn: row.get(10)?,
                 recorded_at: row.get(11)?,
+                workspace_directory: row.get(12)?,
+                project_id: row.get(13)?,
             })
         };
-        let rows = match grant_scope {
-            Some(scope) => stmt.query_map(params![scope, limit.min(200)], map)?,
-            None => stmt.query_map(params![limit.min(200)], map)?,
+        let rows = stmt.query_map(
+            params![
+                workspace_directory,
+                project_id,
+                cursor.as_ref().map(|value| value.0 as i64),
+                cursor.as_ref().map(|value| value.1.as_str()),
+                cursor.as_ref().map(|value| value.2.as_str()),
+                cursor.as_ref().map(|value| value.3.as_str()),
+                limit.min(200) + 1,
+            ],
+            map,
+        )?;
+        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = if items.len() > limit.min(200) as usize {
+            let item = items
+                .get(limit.min(200) as usize - 1)
+                .expect("approval page has a last item");
+            let cursor_value = (
+                item.recorded_at,
+                item.approval_id.clone(),
+                item.workspace_directory.clone().unwrap_or_default(),
+                item.project_id.clone().unwrap_or_default(),
+            );
+            items.pop();
+            Some(serde_json::to_string(&cursor_value).expect("approval cursor serializes"))
+        } else {
+            None
         };
-        rows.collect()
+        Ok((items, next_cursor))
     }
 
     pub fn root_matches(

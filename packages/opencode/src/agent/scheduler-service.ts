@@ -89,6 +89,8 @@ export const layerWith = (input: {
                         grant_scope: data.grant?.scope ?? null, grant_resources: data.grant?.resources ?? [],
                         expires_at: data.grant?.expiresAt ?? null, agent: data.decision.agent ?? null,
                         turn: data.decision.turn ?? null, recorded_at: Date.now(),
+                        workspace_directory: data.workspaceDirectory,
+                        project_id: data.projectID,
                       },
                     }),
                     catch: (error) => error instanceof Error ? error : new Error(String(error)),

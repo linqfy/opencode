@@ -105,6 +105,8 @@ const Replied = define({
     reply: Reply,
     decision: Decision,
     grant: Grant.pipe(optional),
+    workspaceDirectory: Schema.String,
+    projectID: Schema.String,
   },
 })
 export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }

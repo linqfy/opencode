@@ -449,6 +449,8 @@ describe("PermissionV2", () => {
       expect(yield* Deferred.await(finalized)).toMatchObject({
         requestID: request.id,
         reply: "session",
+        workspaceDirectory: "/project",
+        projectID: Project.ID.global,
         decision: expect.objectContaining({ requestedAction: "read", approvalSource: "user" }),
         grant: {
           scope: "session",

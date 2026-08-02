@@ -148,6 +148,7 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             }
             {
                 state.projections.validate_memory_result(&kind)?;
+                validate_approval_event(&kind)?;
                 validate_task_event_from_journal(&state.task_journal, &kind)?;
             }
             let outcome = state.commit.propose(key, kind).map_err(|e| e.to_string())?;
@@ -315,21 +316,34 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
         }
 
         "list_approval_history" => {
-            let grant_scope = req
+            let workspace_directory = req
                 .params
-                .get("grant_scope")
-                .map(|value| value.as_str().ok_or("bad grant_scope"))
+                .get("workspace_directory")
+                .and_then(|value| value.as_str())
+                .ok_or("missing workspace_directory")?;
+            if !is_absolute_workspace(workspace_directory) {
+                return Err("workspace_directory must be absolute".into());
+            }
+            let project_id = req
+                .params
+                .get("project_id")
+                .map(|value| value.as_str().ok_or("bad project_id"))
+                .transpose()?;
+            let cursor = req
+                .params
+                .get("cursor")
+                .map(|value| value.as_str().ok_or("bad cursor"))
                 .transpose()?;
             let limit = req
                 .params
                 .get("limit")
                 .map_or(Ok(100), |value| value.as_u64().ok_or("bad limit"))?
                 .min(200);
-            let items = state
+            let (items, next_cursor) = state
                 .projections
-                .list_approval_history(grant_scope, limit)
+                .list_approval_history(workspace_directory, project_id, cursor, limit)
                 .map_err(|e| e.to_string())?;
-            Ok(json!({ "items": items }))
+            Ok(json!({ "items": items, "next_cursor": next_cursor }))
         }
 
         "list_memory_records" => {
@@ -1121,6 +1135,27 @@ fn is_absolute_workspace(value: &str) -> bool {
             && value.as_bytes()[0].is_ascii_alphabetic()
             && value.as_bytes()[1] == b':'
             && matches!(value.as_bytes()[2], b'\\' | b'/')
+}
+
+fn validate_approval_event(kind: &EventKind) -> Result<(), String> {
+    let EventKind::ApprovalFinalized {
+        workspace_directory,
+        project_id,
+        ..
+    } = kind
+    else {
+        return Ok(());
+    };
+    let workspace_directory = workspace_directory
+        .as_deref()
+        .ok_or("approval audit scope is required")?;
+    if !is_absolute_workspace(workspace_directory) {
+        return Err("approval audit workspace directory must be absolute".into());
+    }
+    if project_id.as_deref().is_none_or(str::is_empty) {
+        return Err("approval audit project id is required".into());
+    }
+    Ok(())
 }
 
 fn validate_mailbox_references(name: &str, values: &[String]) -> Result<(), String> {
