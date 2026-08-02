@@ -156,6 +156,28 @@ describe("Sandbox.Broker", () => {
     })
   })
 
+  test("denies requested Windows containment until the native probe is ready", () => {
+    const broker = Sandbox.Broker.create({ platform: "win32", containment: () => ({ outcome: "allow" }) })
+
+    expect(broker.plan(request({ profile: contained({ windowsContainment: "requested" }) }))).toMatchObject({
+      outcome: "deny",
+      reason: "containment-unsupported",
+    })
+  })
+
+  test("denies requested network isolation when the native broker cannot provide WFP deny", () => {
+    const broker = Sandbox.Broker.create({
+      platform: "win32",
+      capabilities: ["job-object-atomic", "explicit-environment", "restricted-token"],
+      containment: () => ({ outcome: "allow" }),
+    })
+
+    expect(broker.plan(request({ profile: contained({ windowsContainment: "requested" }) }))).toMatchObject({
+      outcome: "deny",
+      reason: "network-policy",
+    })
+  })
+
   test("permits host launch only through the explicit unconfined profile", () => {
     const broker = Sandbox.Broker.create({ platform: "linux" })
 

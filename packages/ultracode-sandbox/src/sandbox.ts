@@ -1,5 +1,9 @@
 import path from "node:path"
 
+import type { BrokerCapability } from "./native"
+
+export { NativeSupervisor } from "./native"
+
 export type Authorization = "allow" | "ask" | "deny"
 export type NetworkPolicy = "allow" | "deny"
 export type WindowsContainment = "none" | "requested" | "required"
@@ -63,6 +67,7 @@ type BackendDecision = Pick<Plan, "outcome"> & Partial<Pick<DeniedPlan, "reason"
 export type BrokerOptions = {
   readonly platform?: Platform
   readonly wsl?: boolean
+  readonly capabilities?: ReadonlyArray<BrokerCapability>
   readonly policy?: (request: LaunchRequest) => BackendDecision
   readonly containment?: (request: LaunchRequest) => BackendDecision
   readonly resolvePath?: (path: string) => string
@@ -85,7 +90,21 @@ function plan(request: LaunchRequest, options: BrokerOptions): Plan {
   if (request.profile.mode === "unconfined") return allowed(request, "unconfined")
   if (request.profile.windowsContainment !== "none" && options.platform !== "win32")
     return denied("containment-unsupported")
+  if (request.profile.windowsContainment !== "none" && options.platform === "win32" && !options.capabilities)
+    return denied("containment-unsupported")
   if (options.wsl || !options.containment) return denied("containment-unsupported")
+  if (
+    request.profile.windowsContainment !== "none" &&
+    request.profile.network === "deny" &&
+    !options.capabilities?.includes("network-deny")
+  )
+    return denied("network-policy")
+  if (
+    request.profile.windowsContainment !== "none" &&
+    request.profile.writableRoots.length > 0 &&
+    !options.capabilities?.includes("writable-root")
+  )
+    return denied("cwd-outside-writable-roots")
   if (!isAllowedExecutable(request.executable, request.profile.allowedExecutables))
     return denied("executable-not-allowed")
   if (!contains(request.cwd, request.profile.readRoots, options.platform, options.resolvePath))
