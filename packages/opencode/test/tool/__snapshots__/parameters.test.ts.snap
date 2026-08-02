@@ -302,7 +302,7 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "background": {
-      "description": "Run the agent in the background. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress",
+      "description": "Run the agent in the background and return its scheduler task handle",
       "type": "boolean",
     },
     "command": {
@@ -313,6 +313,20 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "description": "A short (3-5 words) description of the task",
       "type": "string",
     },
+    "maxTokens": {
+      "description": "Execution budget: maximum number of tokens",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
+    },
+    "maxTurns": {
+      "description": "Execution budget: maximum number of agent turns",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
+    },
     "prompt": {
       "description": "The task for the agent to perform",
       "type": "string",
@@ -322,14 +336,24 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "type": "string",
     },
     "task_id": {
-      "description": "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
+      "description": "Set this only to resume a previous scheduler task.",
       "type": "string",
+    },
+    "timeoutMs": {
+      "description": "Execution budget: maximum runtime in milliseconds",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer",
     },
   },
   "required": [
     "description",
     "prompt",
     "subagent_type",
+    "maxTurns",
+    "maxTokens",
+    "timeoutMs",
   ],
   "type": "object",
 }

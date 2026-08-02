@@ -418,7 +418,7 @@ describe("durable task scheduler adapter", () => {
           description: "work",
           agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
           forkMode: "none",
-          budget: { maxTurns: 1, maxTokens: 100 },
+          budget: { maxTurns: 1, maxTokens: 100 } as never,
           background: false,
           parent: {
             rootId: "ignored",

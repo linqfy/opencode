@@ -1,6 +1,7 @@
 Launch a new agent to handle complex, multistep tasks autonomously.
 
 When using the Task tool, you must specify a subagent_type parameter to select which agent type to use.
+You must also provide positive maxTurns, maxTokens, and timeoutMs execution budgets. These are hard limits for the child agent's turns, tokens, and runtime.
 
 When NOT to use the Task tool:
 - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly

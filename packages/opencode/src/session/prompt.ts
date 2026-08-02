@@ -323,7 +323,7 @@ const layer = Layer.effect(
       let error: Error | undefined
       const taskAbort = new AbortController()
       const result = yield* taskTool
-        .execute(taskArgs, {
+        .execute(taskArgs as never, {
           agent: task.agent,
           messageID: assistantMessage.id,
           sessionID,

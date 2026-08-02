@@ -235,16 +235,46 @@ describe("tool parameters", () => {
   })
 
   describe("task", () => {
-    test("accepts description + prompt + subagent_type", () => {
-      const parsed = parse(Task, { description: "d", prompt: "p", subagent_type: "general" })
+    test("accepts explicit execution caps", () => {
+      const parsed = parse(Task, {
+        description: "d",
+        prompt: "p",
+        subagent_type: "general",
+        maxTurns: 4,
+        maxTokens: 1_200,
+        timeoutMs: 30_000,
+      })
       expect(parsed.subagent_type).toBe("general")
     })
     test("accepts optional background flag", () => {
-      const parsed = parse(Task, { description: "d", prompt: "p", subagent_type: "general", background: true })
+      const parsed = parse(Task, {
+        description: "d",
+        prompt: "p",
+        subagent_type: "general",
+        maxTurns: 4,
+        maxTokens: 1_200,
+        timeoutMs: 30_000,
+        background: true,
+      })
       expect(parsed.background).toBe(true)
     })
     test("rejects missing prompt", () => {
       expect(accepts(Task, { description: "d", subagent_type: "general" })).toBe(false)
+    })
+    test("rejects missing execution caps", () => {
+      expect(accepts(Task, { description: "d", prompt: "p", subagent_type: "general", maxTurns: 4 })).toBe(false)
+    })
+    test("rejects non-positive execution caps", () => {
+      expect(
+        accepts(Task, {
+          description: "d",
+          prompt: "p",
+          subagent_type: "general",
+          maxTurns: 4,
+          maxTokens: 0,
+          timeoutMs: -1,
+        }),
+      ).toBe(false)
     })
   })
 

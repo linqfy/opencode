@@ -34,7 +34,7 @@ export namespace TaskSchedulerAdapter {
       readonly toolConstraints: readonly string[]
     }
     readonly forkMode: ForkMode
-    readonly budget: { readonly maxTurns?: number; readonly maxTokens?: number; readonly maxTimeMs?: number }
+    readonly budget: { readonly maxTurns: number; readonly maxTokens: number; readonly maxTimeMs: number }
     readonly background: boolean
     readonly requestedTaskId?: string
     readonly parent: {
@@ -76,6 +76,15 @@ const BaseParameterFields = {
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
   subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
+  maxTurns: Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+    description: "Execution budget: maximum number of agent turns",
+  }),
+  maxTokens: Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+    description: "Execution budget: maximum number of tokens",
+  }),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+    description: "Execution budget: maximum runtime in milliseconds",
+  }),
   task_id: Schema.optional(Schema.String).annotate({
     description: "Set this only to resume a previous scheduler task.",
   }),
@@ -145,7 +154,7 @@ export const TaskTool = Tool.define(
         description: params.description,
         agent: { name: next.name, model, toolConstraints: selectedTools(next.options.tools) },
         forkMode: params.task_id ? "recent" : "none",
-        budget: { maxTurns: next.steps },
+        budget: { maxTurns: params.maxTurns, maxTokens: params.maxTokens, maxTimeMs: params.timeoutMs },
         background: runInBackground,
         ...(params.task_id ? { requestedTaskId: params.task_id } : {}),
         parent: {

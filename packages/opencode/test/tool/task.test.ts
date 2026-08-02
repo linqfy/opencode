@@ -114,6 +114,9 @@ describe("tool.task", () => {
           description: "inspect cache",
           prompt: "inspect the cache key",
           subagent_type: "general",
+          maxTurns: 4,
+          maxTokens: 1_200,
+          timeoutMs: 30_000,
           task_id: "task_resume",
         },
         context(chat, assistant, fake.service),
@@ -125,7 +128,7 @@ describe("tool.task", () => {
           description: "inspect cache",
           agent: { name: "general", model: ref, toolConstraints: [] },
           forkMode: "recent",
-          budget: { maxTurns: undefined },
+          budget: { maxTurns: 4, maxTokens: 1_200, maxTimeMs: 30_000 },
           background: false,
           requestedTaskId: "task_resume",
           parent: expect.objectContaining({
@@ -146,7 +149,14 @@ describe("tool.task", () => {
       const fake = adapter()
       const tool = yield* TaskTool
       const result = yield* (yield* tool.init()).execute(
-        { description: "inspect cache", prompt: "inspect", subagent_type: "general" },
+        {
+          description: "inspect cache",
+          prompt: "inspect",
+          subagent_type: "general",
+          maxTurns: 4,
+          maxTokens: 1_200,
+          timeoutMs: 30_000,
+        },
         context(chat, assistant, fake.service),
       )
 
@@ -163,7 +173,14 @@ describe("tool.task", () => {
       const fake = adapter({ status: "running", summary: "Scheduled" })
       const tool = yield* TaskTool
       const result = yield* (yield* tool.init()).execute(
-        { description: "inspect cache", prompt: "inspect", subagent_type: "general" },
+        {
+          description: "inspect cache",
+          prompt: "inspect",
+          subagent_type: "general",
+          maxTurns: 4,
+          maxTokens: 1_200,
+          timeoutMs: 30_000,
+        },
         context(chat, assistant, fake.service),
       )
 
@@ -179,7 +196,14 @@ describe("tool.task", () => {
       const abort = new AbortController()
       const tool = yield* TaskTool
       yield* (yield* tool.init()).execute(
-        { description: "inspect cache", prompt: "inspect", subagent_type: "general" },
+        {
+          description: "inspect cache",
+          prompt: "inspect",
+          subagent_type: "general",
+          maxTurns: 4,
+          maxTokens: 1_200,
+          timeoutMs: 30_000,
+        },
         context(chat, assistant, fake.service, abort),
       )
       abort.abort()
@@ -195,7 +219,14 @@ describe("tool.task", () => {
       const tool = yield* TaskTool
       const exit = yield* (yield* tool.init())
         .execute(
-          { description: "inspect cache", prompt: "inspect", subagent_type: "general" },
+          {
+            description: "inspect cache",
+            prompt: "inspect",
+            subagent_type: "general",
+            maxTurns: 4,
+            maxTokens: 1_200,
+            timeoutMs: 30_000,
+          },
           context(chat, assistant, {
             schedule: () => Effect.die(new Error("scheduler unavailable")),
             cancel: () => Effect.succeed({ state: "cancellation_pending" as const }),
@@ -205,6 +236,51 @@ describe("tool.task", () => {
 
       expect(Exit.isFailure(exit)).toBe(true)
       expect(String(exit)).toContain("scheduler unavailable")
+    }),
+  )
+
+  it.instance("rejects missing execution caps before scheduling", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const fake = adapter()
+      const tool = yield* TaskTool
+      const execute = (yield* tool.init()).execute as unknown as (
+        params: unknown,
+        ctx: Tool.Context,
+      ) => Effect.Effect<unknown>
+      const exit = yield* execute(
+        { description: "inspect cache", prompt: "inspect", subagent_type: "general", maxTurns: 4 },
+        context(chat, assistant, fake.service),
+      ).pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(fake.scheduled).toEqual([])
+    }),
+  )
+
+  it.instance("rejects non-positive execution caps before scheduling", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const fake = adapter()
+      const tool = yield* TaskTool
+      const execute = (yield* tool.init()).execute as unknown as (
+        params: unknown,
+        ctx: Tool.Context,
+      ) => Effect.Effect<unknown>
+      const exit = yield* execute(
+        {
+          description: "inspect cache",
+          prompt: "inspect",
+          subagent_type: "general",
+          maxTurns: 4,
+          maxTokens: 0,
+          timeoutMs: -1,
+        },
+        context(chat, assistant, fake.service),
+      ).pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(fake.scheduled).toEqual([])
     }),
   )
 })
