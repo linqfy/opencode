@@ -87,6 +87,7 @@ export function createWorktreeLeaseAdapter(
 ) {
   const leases = new Map<string, WorktreeLease>()
   const pending = new Set<string>()
+  const released = new Set<string>()
 
   const acquire = Effect.fn("SchedulerWorktree.acquire")(function* (input: WorktreeLeaseInput) {
     validateIdentity(input)
@@ -122,6 +123,7 @@ export function createWorktreeLeaseAdapter(
         ready: true,
         ...(info.branch ? { branch: info.branch } : {}),
       }
+      released.delete(key)
       leases.set(key, lease)
       return lease
     }).pipe(Effect.onExit(() => Effect.sync(() => pending.delete(key))))
@@ -132,13 +134,36 @@ export function createWorktreeLeaseAdapter(
   ) {
     const key = leaseKey(input)
     const lease = leases.get(key)
+    if (!lease && released.has(key)) return
     if (!lease) return yield* Effect.fail(new Error(`worktree lease not found for task ${input.taskId}`))
     yield* worktree.remove({ directory: lease.location.directory })
     leases.delete(key)
+    released.add(key)
+  })
+
+  const recover = Effect.fn("SchedulerWorktree.recover")(function* (input: WorktreeLeaseInput) {
+    validateIdentity(input)
+    const key = leaseKey(input)
+    const existing = leases.get(key)
+    if (existing) return existing
+    const info = (yield* worktree.list()).find((candidate) => candidate.name === worktreeName(input.rootId, input.taskId))
+    if (!info) return yield* Effect.fail(new Error(`worktree lease cannot be recovered for task ${input.taskId}`))
+    const lease: WorktreeLease = {
+      rootId: input.rootId,
+      taskId: input.taskId,
+      location: { directory: info.directory },
+      write: true,
+      ready: true,
+      ...(info.branch ? { branch: info.branch } : {}),
+    }
+    released.delete(key)
+    leases.set(key, lease)
+    return lease
   })
 
   return {
     acquire,
+    recover,
     release,
     use: <A, E, R>(input: WorktreeLeaseInput, execute: (lease: WorktreeLease) => Effect.Effect<A, E, R>) =>
       Effect.acquireUseRelease(acquire(input), execute, (lease) => (lease.write ? release(lease) : Effect.void)),
@@ -225,9 +250,14 @@ export function createChildSessionAdapter(input: {
   ) {
     const key = leaseKey(child)
     const result = started.get(key)
+    if (finished.has(key)) return { observed: false } satisfies ChildCancellation
     if (cancelled.has(key)) return { observed: false } satisfies ChildCancellation
-    cancelled.add(key)
+    if (!result) {
+      cancelled.add(key)
+      return { observed: true } satisfies ChildCancellation
+    }
     const outcome = yield* input.execution.interrupt(result?.sessionId ?? childSessionID(child.rootId, child.taskId))
+    if (outcome !== undefined && outcome.observed) cancelled.add(key)
     return { observed: outcome !== undefined && outcome.observed } satisfies ChildCancellation
   })
 
@@ -246,12 +276,14 @@ export function createTaskSchedulerAdapter(input: {
       rootId: string
       lease: WorktreeLease
       handle: TaskSchedulerAdapter.Handle
+      terminal?: SessionExecution.TerminalRunResult
     }
   >()
   const finalize = (state: { readonly rootId: string; readonly taskId: string; readonly lease: WorktreeLease }, terminal: SessionExecution.TerminalRunResult) =>
     Effect.gen(function* () {
-      const status = terminalTaskState(terminal.status)
-      const evidence = terminalEvidence(terminal)
+      const result = terminalResult(terminal)
+      const status = result.status
+      const evidence = result.evidence
       yield* Effect.promise(() =>
         input.scheduler.useChildBudget({
           key: `task:${state.rootId}:${state.taskId}:budget-used`,
@@ -300,6 +332,7 @@ export function createTaskSchedulerAdapter(input: {
           evidence,
         }),
       )
+      yield* input.worktree.release({ rootId: state.rootId, taskId: state.taskId })
       yield* Effect.promise(() =>
         input.scheduler.releaseWorktree(
           state.rootId,
@@ -308,7 +341,6 @@ export function createTaskSchedulerAdapter(input: {
           `task:${state.rootId}:${state.taskId}:worktree-released`,
         ),
       )
-      yield* input.worktree.release({ rootId: state.rootId, taskId: state.taskId })
       const handle = {
         rootId: state.rootId,
         taskId: state.taskId,
@@ -325,6 +357,7 @@ export function createTaskSchedulerAdapter(input: {
         const rootId = rootTaskID(request.parent.sessionID, request.parent.messageID)
         const taskId = request.requestedTaskId ?? childTaskID(rootId, request)
         const current = active.get(taskId)
+        if (current?.terminal) return yield* finalize({ rootId: current.rootId, taskId, lease: current.lease }, current.terminal)
         if (current) return current.handle
         const maxTokens = request.budget.maxTokens
         const maxTurns = request.budget.maxTurns
@@ -374,19 +407,24 @@ export function createTaskSchedulerAdapter(input: {
             budget: { total: budget, fixedCosts: 0 },
           }),
         )
-        yield* Effect.promise(() => input.scheduler.admit(rootId, taskId, `task:${rootId}:${taskId}:admit`))
+        const durable = yield* Effect.promise(() => input.scheduler.getTask(rootId, taskId))
+        const recovering = durable.state === "running"
+        if (!recovering)
+          yield* Effect.promise(() => input.scheduler.admit(rootId, taskId, `task:${rootId}:${taskId}:admit`))
         const scope = yield* Scope.make()
-        const lease = yield* input.worktree
-          .acquire({ rootId, taskId, stateChanging: true })
+        const lease = yield* (recovering
+          ? input.worktree.recover({ rootId, taskId, stateChanging: true })
+          : input.worktree.acquire({ rootId, taskId, stateChanging: true }))
           .pipe(Effect.provideService(Scope.Scope, scope))
-        yield* Effect.promise(() =>
-          input.scheduler.leaseWorktree(
-            rootId,
-            taskId,
-            lease.location.directory,
-            `task:${rootId}:${taskId}:worktree-leased`,
-          ),
-        )
+        if (!recovering)
+          yield* Effect.promise(() =>
+            input.scheduler.leaseWorktree(
+              rootId,
+              taskId,
+              lease.location.directory,
+              `task:${rootId}:${taskId}:worktree-leased`,
+            ),
+          )
         const childInput = {
           rootId,
           taskId,
@@ -426,7 +464,10 @@ export function createTaskSchedulerAdapter(input: {
                 blockedReason: error.message,
               }),
             ),
-            Effect.andThen((terminal) => finalize({ rootId, taskId, lease }, terminal)),
+            Effect.andThen((terminal) => {
+              active.set(taskId, { rootId, lease, handle: running, terminal })
+              return finalize({ rootId, taskId, lease }, terminal)
+            }),
           )
         if (request.background) {
           yield* execute.pipe(Effect.onExit((exit) => Scope.close(scope, exit)), Effect.asVoid, Effect.forkIn(scope))
@@ -503,14 +544,34 @@ function terminalTaskState(status: SessionExecution.TerminalRunResult["status"])
   return "failed" as const
 }
 
-function terminalEvidence(terminal: SessionExecution.TerminalRunResult): TaskSchedulerAdapter.Evidence {
-  return {
+function terminalResult(terminal: SessionExecution.TerminalRunResult): {
+  readonly status: "completed" | "failed" | "cancelled"
+  readonly evidence: TaskSchedulerAdapter.Evidence
+} {
+  const evidence = {
     summary: terminal.summary ?? terminal.blockedReason ?? terminal.status,
     artifactIds: terminal.artifactIds,
     changedPaths: terminal.changedPaths,
     ...(terminal.testSummary === undefined ? {} : { testSummary: terminal.testSummary }),
     ...(terminal.blockedReason === undefined ? {} : { blockedReason: terminal.blockedReason }),
   }
+  if (
+    terminal.status === "completed" &&
+    terminal.summary === undefined &&
+    terminal.artifactIds.length === 0 &&
+    terminal.changedPaths.length === 0 &&
+    terminal.testSummary === undefined
+  ) {
+    return {
+      status: "failed",
+      evidence: {
+        ...evidence,
+        summary: "Child completed without bounded result evidence",
+        blockedReason: "no bounded child result evidence",
+      },
+    }
+  }
+  return { status: terminalTaskState(terminal.status), evidence }
 }
 
 function encodeID(value: string) {

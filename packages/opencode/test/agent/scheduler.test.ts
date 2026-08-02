@@ -52,6 +52,10 @@ class FakeSidecar implements SchedulerEventClient {
   }
 
   async proposeCommit(key: string, kind: { kind: string; data: Record<string, unknown> }) {
+    if (this.failKey === key) {
+      this.failKey = undefined
+      throw new Error(`injected commit failure: ${key}`)
+    }
     const existing = this.events.find((event) => event.key === key)
     if (existing) return { seq: this.events.indexOf(existing) + 1, hash: key, duplicate: true }
     const event = { key, kind }
@@ -98,6 +102,8 @@ class FakeSidecar implements SchedulerEventClient {
     }
     return { seq: this.events.length, hash: key, duplicate: false }
   }
+
+  failKey?: string
 }
 
 describe("scheduler worktree lease adapter", () => {
@@ -379,7 +385,7 @@ describe("scheduler child Session V2 adapter", () => {
         interrupt: (sessionID) => Effect.sync(() => void interrupted.push(sessionID)),
       },
     })
-    const result = await Effect.runPromise(
+    await Effect.runPromise(
       adapter.start({
         rootId: "root",
         taskId: "child",
@@ -399,7 +405,7 @@ describe("scheduler child Session V2 adapter", () => {
     await Effect.runPromise(adapter.cancel({ rootId: "root", taskId: "child" }))
     await Effect.runPromise(adapter.cancel({ rootId: "root", taskId: "child" }))
 
-    expect(interrupted).toEqual([result.sessionId])
+    expect(interrupted).toEqual([])
   })
 })
 
@@ -774,5 +780,251 @@ describe("durable task scheduler adapter", () => {
     expect(released).toEqual(["/child"])
     expect(sidecar.events.map((event) => event.kind.kind)).toContain("worktree-released")
     expect(sidecar.events.map((event) => event.kind.kind)).not.toContain("task-cancellation-observed")
+  })
+
+  test("fails rather than fabricating completed evidence from a terminal status alone", async () => {
+    const sidecar = new FakeSidecar()
+    const worktree = createWorktreeLeaseAdapter(
+      { directory: "/parent" },
+      {
+        makeWorktreeInfo: () => Effect.succeed({ name: "child", branch: "opencode/child", directory: "/child" }),
+        createFromInfo: () => Effect.void,
+        create: () => Effect.die("unexpected"),
+        list: () => Effect.succeed([]),
+        remove: () => Effect.succeed(true),
+        reset: () => Effect.succeed(true),
+      },
+      (_, resolve) => {
+        resolve(Effect.void)
+        return () => {}
+      },
+    )
+    const child = createChildSessionAdapter({
+      session: { create: (input) => Effect.succeed({ id: input.id }), prompt: () => Effect.succeed({}) },
+      execution: {
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 0, turns: 1, elapsedMs: 1 },
+            artifactIds: [],
+            changedPaths: [],
+          }),
+        interrupt: () => Effect.succeed({ observed: false }),
+      },
+    })
+    const adapter = createTaskSchedulerAdapter({ scheduler: createScheduler(sidecar), worktree, child })
+
+    const handle = await Effect.runPromise(
+      adapter.schedule({
+        brief: "work",
+        description: "work",
+        agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
+        forkMode: "none",
+        budget: { maxTurns: 1, maxTokens: 100, maxTimeMs: 1_000 },
+        background: false,
+        parent: { rootId: "ignored", taskId: "ignored", sessionID: "ses_parent" as never, messageID: "msg_parent" as never },
+      }),
+    )
+
+    expect(handle.status).toBe("waiting")
+    expect(handle.evidence.blockedReason).toContain("no bounded child result evidence")
+    expect(sidecar.deliverables).toEqual([expect.objectContaining({ status: "failed" })])
+  })
+
+  test.each(["budget-used", "terminal", "deliverable", "parent-message", "worktree-released"])(
+    "repairs finalization after a failed %s commit without leaking its worktree",
+    async (boundary) => {
+      const sidecar = new FakeSidecar()
+      const removed: string[] = []
+      const worktree = createWorktreeLeaseAdapter(
+        { directory: "/parent" },
+        {
+          makeWorktreeInfo: () => Effect.succeed({ name: "child", branch: "opencode/child", directory: "/child" }),
+          createFromInfo: () => Effect.void,
+          create: () => Effect.die("unexpected"),
+          list: () => Effect.succeed([]),
+          remove: ({ directory }) => Effect.sync(() => (removed.push(directory), true)),
+          reset: () => Effect.succeed(true),
+        },
+        (_, resolve) => {
+          resolve(Effect.void)
+          return () => {}
+        },
+      )
+      const child = createChildSessionAdapter({
+        session: { create: (input) => Effect.succeed({ id: input.id }), prompt: () => Effect.succeed({}) },
+        execution: {
+          supervise: () =>
+            Effect.succeed({
+              status: "completed",
+              usage: { tokens: 1, turns: 1, elapsedMs: 1 },
+              summary: "verified result",
+              artifactIds: [],
+              changedPaths: [],
+            }),
+          interrupt: () => Effect.succeed({ observed: false }),
+        },
+      })
+      const adapter = createTaskSchedulerAdapter({ scheduler: createScheduler(sidecar), worktree, child })
+      const request = {
+        brief: "work",
+        description: "work",
+        requestedTaskId: "repair-child",
+        agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
+        forkMode: "none" as const,
+        budget: { maxTurns: 1, maxTokens: 100, maxTimeMs: 1_000 },
+        background: false,
+        parent: { rootId: "ignored", taskId: "ignored", sessionID: "ses_parent" as never, messageID: "msg_parent" as never },
+      }
+      const rootId = `root_${Buffer.from("ses_parent\0msg_parent").toString("hex")}`
+      sidecar.failKey = `task:${rootId}:repair-child:${boundary}`
+
+      await expect(Effect.runPromise(adapter.schedule(request))).rejects.toThrow("injected commit failure")
+      const repaired = await Effect.runPromise(adapter.schedule(request))
+
+      expect(repaired.status).toBe("completed")
+      expect(sidecar.deliverables).toEqual([expect.objectContaining({ task_id: "repair-child", status: "completed" })])
+      expect(sidecar.events.filter((event) => event.kind.kind === "worktree-released")).toHaveLength(1)
+      expect(removed).toEqual(["/child"])
+    },
+  )
+
+  test("keeps the durable lease when physical worktree cleanup fails so retry can repair it", async () => {
+    const sidecar = new FakeSidecar()
+    let removals = 0
+    const worktree = createWorktreeLeaseAdapter(
+      { directory: "/parent" },
+      {
+        makeWorktreeInfo: () => Effect.succeed({ name: "child", branch: "opencode/child", directory: "/child" }),
+        createFromInfo: () => Effect.void,
+        create: () => Effect.die("unexpected"),
+        list: () => Effect.succeed([]),
+        remove: () =>
+          Effect.suspend(() => {
+            removals++
+            return removals === 1
+              ? Effect.fail(new Worktree.RemoveFailedError({ message: "physical cleanup failed" }))
+              : Effect.succeed(true)
+          }),
+        reset: () => Effect.succeed(true),
+      },
+      (_, resolve) => {
+        resolve(Effect.void)
+        return () => {}
+      },
+    )
+    const child = createChildSessionAdapter({
+      session: { create: (input) => Effect.succeed({ id: input.id }), prompt: () => Effect.succeed({}) },
+      execution: {
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 1, turns: 1, elapsedMs: 1 },
+            summary: "verified result",
+            artifactIds: [],
+            changedPaths: [],
+          }),
+        interrupt: () => Effect.succeed({ observed: false }),
+      },
+    })
+    const adapter = createTaskSchedulerAdapter({ scheduler: createScheduler(sidecar), worktree, child })
+    const request = {
+      brief: "work",
+      description: "work",
+      requestedTaskId: "cleanup-child",
+      agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
+      forkMode: "none" as const,
+      budget: { maxTurns: 1, maxTokens: 100, maxTimeMs: 1_000 },
+      background: false,
+      parent: { rootId: "ignored", taskId: "ignored", sessionID: "ses_parent" as never, messageID: "msg_parent" as never },
+    }
+
+    await expect(Effect.runPromise(adapter.schedule(request))).rejects.toThrow("physical cleanup failed")
+    expect(sidecar.events.map((event) => event.kind.kind)).not.toContain("worktree-released")
+    expect((await Effect.runPromise(adapter.schedule(request))).status).toBe("completed")
+    expect(removals).toBe(2)
+    expect(sidecar.events.filter((event) => event.kind.kind === "worktree-released")).toHaveLength(1)
+  })
+
+  test("reconstructs a durable running task without allocating a second worktree after restart", async () => {
+    const sidecar = new FakeSidecar()
+    const rootId = `root_${Buffer.from("ses_parent\0msg_parent").toString("hex")}`
+    sidecar.tasks.push(
+      {
+        root_id: rootId,
+        task_id: rootId,
+        parent_task_id: null,
+        depth: 0,
+        state_changing: false,
+        budget: 1_000,
+        reserved_parent: 600,
+        reserved_child_pool: 300,
+        reserved_synthesis: 100,
+        budget_used: 0,
+        state: "pending",
+        dependencies: [],
+      },
+      {
+        root_id: rootId,
+        task_id: "restarted-child",
+        parent_task_id: rootId,
+        depth: 1,
+        state_changing: true,
+        budget: 100,
+        reserved_parent: 60,
+        reserved_child_pool: 30,
+        reserved_synthesis: 10,
+        budget_used: 0,
+        state: "running",
+        dependencies: [],
+      },
+    )
+    let allocated = 0
+    const worktree = createWorktreeLeaseAdapter(
+      { directory: "/parent" },
+      {
+        makeWorktreeInfo: () => Effect.sync(() => (allocated++, { name: "new", directory: "/new" })),
+        createFromInfo: () => Effect.void,
+        create: () => Effect.die("unexpected"),
+        list: () => Effect.succeed([{ name: `scheduler-${Buffer.from(rootId).toString("hex")}-${Buffer.from("restarted-child").toString("hex")}`, directory: "/recovered" }]),
+        remove: () => Effect.succeed(true),
+        reset: () => Effect.succeed(true),
+      },
+      (_, resolve) => {
+        resolve(Effect.void)
+        return () => {}
+      },
+    )
+    const child = createChildSessionAdapter({
+      session: { create: (input) => Effect.succeed({ id: input.id }), prompt: () => Effect.succeed({}) },
+      execution: {
+        supervise: () =>
+          Effect.succeed({
+            status: "completed",
+            usage: { tokens: 1, turns: 1, elapsedMs: 1 },
+            summary: "recovered result",
+            artifactIds: [],
+            changedPaths: [],
+          }),
+        interrupt: () => Effect.succeed({ observed: false }),
+      },
+    })
+    const adapter = createTaskSchedulerAdapter({ scheduler: createScheduler(sidecar), worktree, child })
+
+    await Effect.runPromise(
+      adapter.schedule({
+        brief: "work",
+        description: "work",
+        requestedTaskId: "restarted-child",
+        agent: { name: "build", model: { providerID: "test", modelID: "model" }, toolConstraints: [] },
+        forkMode: "none",
+        budget: { maxTurns: 1, maxTokens: 100, maxTimeMs: 1_000 },
+        background: false,
+        parent: { rootId: "ignored", taskId: "ignored", sessionID: "ses_parent" as never, messageID: "msg_parent" as never },
+      }),
+    )
+
+    expect(allocated).toBe(0)
+    expect(sidecar.events.find((event) => event.kind.kind === "worktree-released")?.kind.data.worktree_id).toBe("/recovered")
   })
 })

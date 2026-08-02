@@ -173,11 +173,13 @@ export const layer = Layer.unwrap(
             ),
           interrupt: (sessionID) =>
             Effect.context<never>().pipe(
-              Effect.flatMap((context) =>
-                (Context.get(context as never, SessionExecution.Service) as SessionExecution.Interface).interrupt(
-                  SessionSchema.ID.make(sessionID),
-                ),
-              ),
+              Effect.flatMap((context) => {
+                const execution = Context.get(context as never, SessionExecution.Service) as SessionExecution.Interface
+                const id = SessionSchema.ID.make(sessionID)
+                return execution.active.pipe(
+                  Effect.flatMap((active) => execution.interrupt(id).pipe(Effect.as({ observed: active.has(id) }))),
+                )
+              }),
             ),
         },
       },
