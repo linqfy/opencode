@@ -41,6 +41,13 @@ export interface DeliverableInput {
   readonly manifest: EvidenceManifest
 }
 
+export interface BudgetUsageInput {
+  readonly key: string
+  readonly rootId: string
+  readonly taskId: string
+  readonly amount: number
+}
+
 export interface EvidenceQuery {
   readonly rootId: string
   readonly recipientTaskId: string
@@ -95,6 +102,11 @@ export function createScheduler(client: SchedulerEventClient) {
       if (!admission.ok) throw new Error(admission.error)
       await client.proposeCommit(key, stateChanged(rootId, taskId, "running"))
     },
+    getTask: async (rootId: string, taskId: string) => {
+      const task = (await client.listTasks(rootId, EVIDENCE_LIMIT)).find((candidate) => candidate.task_id === taskId)
+      if (!task) throw new Error(`unknown task: ${taskId}`)
+      return task
+    },
     requestCancellation: async (rootId: string, taskId: string, reason: string, key: string) => {
       await client.proposeCommit(key, {
         kind: "task-cancellation-requested",
@@ -117,6 +129,14 @@ export function createScheduler(client: SchedulerEventClient) {
       await client.proposeCommit(key, {
         kind: "worktree-released",
         data: { root_id: rootId, task_id: taskId, worktree_id: worktreeId },
+      })
+    },
+    useChildBudget: async (input: BudgetUsageInput) => {
+      if (!Number.isSafeInteger(input.amount) || input.amount < 0) throw new Error("invalid budget usage")
+      if (input.amount === 0) return
+      await client.proposeCommit(input.key, {
+        kind: "task-budget-used",
+        data: { root_id: input.rootId, task_id: input.taskId, amount: input.amount, target: "child-pool" },
       })
     },
     sendMailbox: async (input: MailboxInput) => {
@@ -150,8 +170,18 @@ export function createScheduler(client: SchedulerEventClient) {
       const task = tasks.find((candidate) => candidate.task_id === input.taskId)
       if (!task) throw new Error(`unknown task: ${input.taskId}`)
       if (!isTerminal(input.status)) throw new Error("terminal state required")
-      if (transitionTaskState(task.state as TaskState, input.status).ok === false) throw new Error("terminal state required")
-      await client.proposeCommit(input.stateKey, stateChanged(input.rootId, input.taskId, input.status, input.manifest.blockedReason))
+      const deliverables = await client.listTaskDeliverables(input.rootId, EVIDENCE_LIMIT)
+      const deliverable = deliverables.find((candidate) => candidate.task_id === input.taskId)
+      if (isTerminal(task.state as TaskState)) {
+        if (task.state !== input.status) throw new Error("terminal state conflict")
+        if (deliverable) {
+          if (deliverable.status !== input.status) throw new Error("deliverable status conflict")
+          return
+        }
+      } else {
+        if (transitionTaskState(task.state as TaskState, input.status).ok === false) throw new Error("terminal state required")
+        await client.proposeCommit(input.stateKey, stateChanged(input.rootId, input.taskId, input.status, input.manifest.blockedReason))
+      }
       await client.proposeCommit(input.deliverableKey, {
         kind: "task-deliverable-committed",
         data: {

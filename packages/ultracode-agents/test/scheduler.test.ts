@@ -324,6 +324,39 @@ describe("sidecar-backed scheduler", () => {
     ])
   })
 
+  test("repairs a missing deliverable for an already matching terminal task without repeating its state transition", async () => {
+    const client = new FakeEventClient()
+    const scheduler = createScheduler(client)
+    await scheduler.spawn(spawnInput())
+    await scheduler.admit("root", "root-task", "admit-root")
+    await client.proposeCommit("terminal-root", {
+      kind: "task-state-changed",
+      data: { root_id: "root", task_id: "root-task", state: "completed", reason: null },
+    })
+
+    await scheduler.commitDeliverable({
+      rootId: "root",
+      taskId: "root-task",
+      stateKey: "must-not-be-used",
+      deliverableKey: "repair-deliverable",
+      status: "completed",
+      manifest: { summary: "recovered", artifactIds: [], changedPaths: [] },
+    })
+
+    expect(client.events.map((event) => event.key)).not.toContain("must-not-be-used")
+    expect(client.events.at(-1)).toEqual(expect.objectContaining({ key: "repair-deliverable" }))
+    await scheduler.commitDeliverable({
+      rootId: "root",
+      taskId: "root-task",
+      stateKey: "must-not-be-used-again",
+      deliverableKey: "repair-deliverable-again",
+      status: "completed",
+      manifest: { summary: "recovered", artifactIds: [], changedPaths: [] },
+    })
+    expect(client.events.map((event) => event.key)).not.toContain("must-not-be-used-again")
+    expect(client.events.map((event) => event.key)).not.toContain("repair-deliverable-again")
+  })
+
   test("rejects nonterminal and oversized deliverables before committing", async () => {
     const client = new FakeEventClient()
     const scheduler = createScheduler(client)

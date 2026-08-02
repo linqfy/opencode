@@ -71,6 +71,11 @@ export interface ChildExecutionResult {
   readonly terminal: SessionExecution.TerminalRunResult
 }
 
+export interface ChildSessionHandle {
+  readonly sessionId: string
+  readonly inputId: string
+}
+
 export interface ChildCancellation {
   readonly observed: boolean
 }
@@ -144,11 +149,12 @@ export function createChildSessionAdapter(input: {
   readonly session: ChildSessionBoundary
   readonly execution: ChildExecutionBoundary
 }) {
-  const started = new Map<string, ChildExecutionResult>()
+  const started = new Map<string, ChildSessionHandle>()
+  const finished = new Map<string, ChildExecutionResult>()
   const starting = new Set<string>()
   const cancelled = new Set<string>()
 
-  const start = Effect.fn("SchedulerChildSession.start")(function* (child: ChildSessionInput) {
+  const begin = Effect.fn("SchedulerChildSession.begin")(function* (child: ChildSessionInput) {
     validateIdentity(child)
     const key = leaseKey(child)
     const existing = started.get(key)
@@ -160,6 +166,7 @@ export function createChildSessionAdapter(input: {
     return yield* Effect.gen(function* () {
       const sessionId = childSessionID(child.rootId, child.taskId)
       const inputId = childInputID(child.rootId, child.taskId)
+      if (cancelled.has(key)) return { sessionId, inputId } satisfies ChildSessionHandle
       yield* input.session.create({
         id: sessionId,
         location: child.location,
@@ -171,16 +178,46 @@ export function createChildSessionAdapter(input: {
         parent: child.parent,
       })
       yield* input.session.prompt({ id: inputId, sessionID: sessionId, prompt: child.prompt, resume: false })
-      const terminal = yield* input.execution.supervise({
-        sessionID: sessionId,
-        maxTokens: child.maxTokens,
-        maxTurns: child.maxTurns,
-        timeoutMs: child.timeoutMs,
-      })
-      const result = { sessionId, inputId, terminal } satisfies ChildExecutionResult
+      const result = { sessionId, inputId } satisfies ChildSessionHandle
       started.set(key, result)
       return result
     }).pipe(Effect.onExit(() => Effect.sync(() => starting.delete(key))))
+  })
+
+  const supervise = Effect.fn("SchedulerChildSession.supervise")(function* (child: ChildSessionInput) {
+    const key = leaseKey(child)
+    const previous = finished.get(key)
+    if (previous) return previous
+    const startedChild = yield* begin(child)
+    if (cancelled.has(key)) {
+      const result = {
+        ...startedChild,
+        terminal: {
+          status: "cancelled",
+          usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+          artifactIds: [],
+          changedPaths: [],
+        },
+      } satisfies ChildExecutionResult
+      finished.set(key, result)
+      return result
+    }
+    const terminal = yield* input.execution.supervise({
+      sessionID: startedChild.sessionId,
+      maxTokens: child.maxTokens,
+      maxTurns: child.maxTurns,
+      timeoutMs: child.timeoutMs,
+    })
+    const result = cancelled.has(key)
+      ? ({ ...startedChild, terminal: { ...terminal, status: "cancelled" } } satisfies ChildExecutionResult)
+      : ({ ...startedChild, terminal } satisfies ChildExecutionResult)
+    finished.set(key, result)
+    return result
+  })
+
+  const start = Effect.fn("SchedulerChildSession.start")(function* (child: ChildSessionInput) {
+    yield* begin(child)
+    return yield* supervise(child)
   })
 
   const cancel = Effect.fn("SchedulerChildSession.cancel")(function* (
@@ -188,14 +225,13 @@ export function createChildSessionAdapter(input: {
   ) {
     const key = leaseKey(child)
     const result = started.get(key)
-    if (!result) return yield* Effect.fail(new Error(`child session not found for task ${child.taskId}`))
     if (cancelled.has(key)) return { observed: false } satisfies ChildCancellation
     cancelled.add(key)
-    const outcome = yield* input.execution.interrupt(result.sessionId)
+    const outcome = yield* input.execution.interrupt(result?.sessionId ?? childSessionID(child.rootId, child.taskId))
     return { observed: outcome !== undefined && outcome.observed } satisfies ChildCancellation
   })
 
-  return { start, cancel }
+  return { begin, supervise, start, cancel }
 }
 
 /** Binds the durable scheduler to OpenCode's worktree and Session V2 boundaries. */
@@ -212,6 +248,77 @@ export function createTaskSchedulerAdapter(input: {
       handle: TaskSchedulerAdapter.Handle
     }
   >()
+  const finalize = (state: { readonly rootId: string; readonly taskId: string; readonly lease: WorktreeLease }, terminal: SessionExecution.TerminalRunResult) =>
+    Effect.gen(function* () {
+      const status = terminalTaskState(terminal.status)
+      const evidence = terminalEvidence(terminal)
+      yield* Effect.promise(() =>
+        input.scheduler.useChildBudget({
+          key: `task:${state.rootId}:${state.taskId}:budget-used`,
+          rootId: state.rootId,
+          taskId: state.rootId,
+          amount: terminal.usage.tokens,
+        }),
+      )
+      if (status === "cancelled") {
+        const task = yield* Effect.promise(() => input.scheduler.getTask(state.rootId, state.taskId))
+        if (task.state !== "cancelled") {
+          yield* Effect.promise(() =>
+            input.scheduler.requestCancellation(
+              state.rootId,
+              state.taskId,
+              "child execution cancelled",
+              `task:${state.rootId}:${state.taskId}:cancel`,
+            ),
+          )
+        }
+        yield* Effect.promise(() =>
+          input.scheduler.acknowledgeCancellation(
+            state.rootId,
+            state.taskId,
+            `task:${state.rootId}:${state.taskId}:cancel-observed`,
+          ),
+        )
+      }
+      yield* Effect.promise(() =>
+        input.scheduler.commitDeliverable({
+          rootId: state.rootId,
+          taskId: state.taskId,
+          stateKey: `task:${state.rootId}:${state.taskId}:terminal`,
+          deliverableKey: `task:${state.rootId}:${state.taskId}:deliverable`,
+          status,
+          manifest: evidence,
+        }),
+      )
+      yield* Effect.promise(() =>
+        input.scheduler.sendMailbox({
+          key: `task:${state.rootId}:${state.taskId}:parent-message`,
+          rootId: state.rootId,
+          messageId: `message_${encodeID(`${state.rootId}\0${state.taskId}`)}`,
+          senderTaskId: state.taskId,
+          recipientTaskId: state.rootId,
+          evidence,
+        }),
+      )
+      yield* Effect.promise(() =>
+        input.scheduler.releaseWorktree(
+          state.rootId,
+          state.taskId,
+          state.lease.location.directory,
+          `task:${state.rootId}:${state.taskId}:worktree-released`,
+        ),
+      )
+      yield* input.worktree.release({ rootId: state.rootId, taskId: state.taskId })
+      const handle = {
+        rootId: state.rootId,
+        taskId: state.taskId,
+        status: status === "completed" ? "completed" : "waiting",
+        summary: evidence.summary,
+        evidence,
+      } satisfies TaskSchedulerAdapter.Handle
+      active.set(state.taskId, { ...state, handle })
+      return handle
+    })
   return {
     schedule: (request) =>
       Effect.gen(function* () {
@@ -224,6 +331,8 @@ export function createTaskSchedulerAdapter(input: {
         const timeoutMs = request.budget.maxTimeMs
         if (maxTokens === undefined || maxTurns === undefined || timeoutMs === undefined)
           return yield* Effect.fail(new Error("scheduler tasks require maxTokens, maxTurns, and maxTimeMs"))
+        if (![maxTokens, maxTurns, timeoutMs].every((value) => Number.isSafeInteger(value) && value > 0))
+          return yield* Effect.fail(new Error("scheduler task caps must be positive integers"))
         const budget = maxTokens
         const rootBudget = Math.ceil(budget / 3) * 10
         yield* Effect.promise(() =>
@@ -278,7 +387,7 @@ export function createTaskSchedulerAdapter(input: {
             `task:${rootId}:${taskId}:worktree-leased`,
           ),
         )
-        const child = yield* input.child.start({
+        const childInput = {
           rootId,
           taskId,
           location: lease.location,
@@ -291,25 +400,44 @@ export function createTaskSchedulerAdapter(input: {
           timeoutMs,
           forkMode: request.forkMode,
           parent: { sessionID: request.parent.sessionID, messageID: request.parent.messageID },
-        })
-        const handle = {
+        } satisfies ChildSessionInput
+        const running = {
           rootId,
           taskId,
-          status: child.terminal.status === "completed" ? "completed" : "waiting",
-          summary: child.terminal.summary ?? child.terminal.status,
+          status: "running",
+          summary: "Task scheduled",
           evidence: {
-            summary: child.terminal.summary ?? child.terminal.status,
-            artifactIds: child.terminal.artifactIds,
-            changedPaths: child.terminal.changedPaths,
-            ...(child.terminal.testSummary === undefined ? {} : { testSummary: child.terminal.testSummary }),
-            ...(child.terminal.blockedReason === undefined ? {} : { blockedReason: child.terminal.blockedReason }),
+            summary: "Task is running; use the task handle for status.",
+            artifactIds: [],
+            changedPaths: [],
           },
         } satisfies TaskSchedulerAdapter.Handle
-        active.set(taskId, { rootId, lease, handle })
-        return handle
+        active.set(taskId, { rootId, lease, handle: running })
+        const execute = input.child
+          .supervise(childInput)
+          .pipe(
+            Effect.map((child) => child.terminal),
+            Effect.catch((error) =>
+              Effect.succeed({
+                status: "failed" as const,
+                usage: { tokens: 0, turns: 0, elapsedMs: 0 },
+                artifactIds: [],
+                changedPaths: [],
+                blockedReason: error.message,
+              }),
+            ),
+            Effect.andThen((terminal) => finalize({ rootId, taskId, lease }, terminal)),
+          )
+        if (request.background) {
+          yield* execute.pipe(Effect.onExit((exit) => Scope.close(scope, exit)), Effect.asVoid, Effect.forkIn(scope))
+          return running
+        }
+        return yield* execute.pipe(Effect.onExit((exit) => Scope.close(scope, exit)))
       }),
     cancel: (request) =>
       Effect.gen(function* () {
+        const task = yield* Effect.promise(() => input.scheduler.getTask(request.rootId, request.taskId))
+        if (["completed", "failed", "cancelled"].includes(task.state)) return { state: "cancelled" } as const
         yield* Effect.promise(() =>
           input.scheduler.requestCancellation(
             request.rootId,
@@ -320,26 +448,7 @@ export function createTaskSchedulerAdapter(input: {
         )
         const cancellation = yield* input.child.cancel({ rootId: request.rootId, taskId: request.taskId })
         if (!cancellation.observed) return { state: "cancellation_pending" } as const
-        const current = active.get(request.taskId)
-        if (!current?.lease.write) return { state: "cancelled" } as const
-        yield* input.worktree.release({ rootId: current.rootId, taskId: request.taskId })
-        yield* Effect.promise(() =>
-          input.scheduler.releaseWorktree(
-            current.rootId,
-            request.taskId,
-            current.lease.location.directory,
-            `task:${current.rootId}:${request.taskId}:worktree-released`,
-          ),
-        )
-        yield* Effect.promise(() =>
-          input.scheduler.acknowledgeCancellation(
-            current.rootId,
-            request.taskId,
-            `task:${current.rootId}:${request.taskId}:cancel-observed`,
-          ),
-        )
-        active.delete(request.taskId)
-        return { state: "cancelled" } as const
+        return { state: "cancellation_pending" } as const
       }),
   }
 }
@@ -386,6 +495,22 @@ function rootTaskID(sessionID: string, messageID: string) {
 
 function childTaskID(rootId: string, request: TaskSchedulerAdapter.Input) {
   return `task_${encodeID(`${rootId}\0${request.agent.name}\0${request.description}\0${request.brief}`)}`
+}
+
+function terminalTaskState(status: SessionExecution.TerminalRunResult["status"]) {
+  if (status === "completed") return "completed" as const
+  if (status === "cancelled") return "cancelled" as const
+  return "failed" as const
+}
+
+function terminalEvidence(terminal: SessionExecution.TerminalRunResult): TaskSchedulerAdapter.Evidence {
+  return {
+    summary: terminal.summary ?? terminal.blockedReason ?? terminal.status,
+    artifactIds: terminal.artifactIds,
+    changedPaths: terminal.changedPaths,
+    ...(terminal.testSummary === undefined ? {} : { testSummary: terminal.testSummary }),
+    ...(terminal.blockedReason === undefined ? {} : { blockedReason: terminal.blockedReason }),
+  }
 }
 
 function encodeID(value: string) {
