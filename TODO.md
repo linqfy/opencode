@@ -58,6 +58,15 @@
 - Add startup supervision, restart/reconnect behavior, and bounded commit buffering for the sidecar runtime service.
 - Add end-to-end recovery tests covering a task child, sidecar restart, worktree lease reconciliation, and terminal deliverable repair.
 
+## Stage 7 Follow-Up: Authority UI Completion
+
+- Dispatch durable task-cancellation requests to live scheduler children and project confirmed terminal outcomes back into the command center.
+- Replace event-filter inspector placeholders with authoritative bounded projections for context/token state, provider compatibility, and plugin inventory/activity.
+- Add artifact selection/browsing, robust bounded range/error UX, and project-scoped approval paging to the command center.
+- Accumulate paged task results in the virtualized list instead of replacing the current page; expose task-root discovery from the normal app shell.
+- Add authenticated browser coverage for task cancellation, pagination, artifact ranges, approvals, and mobile progressive disclosure.
+- Resolve the existing Arabic i18n parity failure and Bun arm64 extraction blocker before claiming full app/production-build verification.
+
 ## Stage 8 and Stage 9
 
 - Run the Tauri/Rust vertical-slice proof gates before committing to a desktop cutover.
