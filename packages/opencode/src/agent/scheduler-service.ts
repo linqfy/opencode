@@ -11,6 +11,7 @@ import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { EventV2 } from "@opencode-ai/core/event"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
+import type { Node } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
 import { Worktree } from "@/worktree"
 import {
@@ -25,15 +26,40 @@ import type { TaskSchedulerAdapter } from "@/tool/task"
 
 type SchedulerClient = Pick<
   EventsClient,
-  "ping" | "stop" | "listTasks" | "listMailbox" | "listTaskDeliverables" | "proposeCommit" | "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory"
+  | "ping"
+  | "stop"
+  | "listTasks"
+  | "listMailbox"
+  | "listTaskDeliverables"
+  | "proposeCommit"
+  | "queryTaskGraph"
+  | "queryTaskDeliverables"
+  | "listApprovalHistory"
+  | "replay"
+  | "statArtifact"
+  | "openRange"
+  | "cancelTask"
 >
 
-type ReadClient = Pick<SchedulerClient, "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory">
+type ReadClient = Pick<
+  SchedulerClient,
+  "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory" | "replay" | "statArtifact" | "openRange" | "cancelTask"
+>
 
 export type ReadApi = {
   readonly taskGraph: (input: { rootId: string; workspaceDirectory: string; cursor?: string; limit?: number }) => ReturnType<ReadClient["queryTaskGraph"]>
   readonly approvals: (input: { workspaceDirectory: string; projectId?: string; cursor?: string; limit?: number }) => ReturnType<ReadClient["listApprovalHistory"]>
   readonly deliverables: (input: { rootId: string; workspaceDirectory: string; cursor?: string; limit?: number }) => ReturnType<ReadClient["queryTaskDeliverables"]>
+  readonly replay: (input: { session: string; sinceSeq?: number; limit?: number }) => ReturnType<ReadClient["replay"]>
+  readonly artifact: (input: { artifactId: string; scope: string }) => ReturnType<ReadClient["statArtifact"]>
+  readonly artifactRange: (input: { artifactId: string; scope: string; start?: number; end?: number }) => ReturnType<ReadClient["openRange"]>
+  readonly cancel: (input: {
+    rootId: string
+    taskId: string
+    workspaceDirectory: string
+    reason: string
+    idempotencyKey: string
+  }) => ReturnType<ReadClient["cancelTask"]>
 }
 
 type Runtime = {
@@ -55,6 +81,10 @@ export function createReadApi(client: ReadClient): ReadApi {
     taskGraph: (input) => client.queryTaskGraph(input.rootId, input.workspaceDirectory, input.cursor, input.limit),
     approvals: (input) => client.listApprovalHistory(input.workspaceDirectory, input.projectId, input.cursor, input.limit),
     deliverables: (input) => client.queryTaskDeliverables(input.rootId, input.workspaceDirectory, input.cursor, input.limit),
+    replay: (input) => client.replay(input.session, input.sinceSeq, input.limit),
+    artifact: (input) => client.statArtifact(input.artifactId, input.scope),
+    artifactRange: (input) => client.openRange(input.artifactId, input.scope, input.start, input.end),
+    cancel: (input) => client.cancelTask(input.rootId, input.taskId, input.workspaceDirectory, input.reason, input.idempotencyKey),
   }
 }
 
@@ -266,6 +296,6 @@ export const node = makeGlobalNode({
   service: Service,
   layer: layer.pipe(Layer.orDie),
   deps: [Worktree.node, EventV2.node],
-})
+}) as unknown as Node<Service, never>
 
 export * as SchedulerService from "./scheduler-service"

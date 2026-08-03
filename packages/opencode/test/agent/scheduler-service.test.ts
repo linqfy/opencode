@@ -28,6 +28,10 @@ describe("SchedulerService", () => {
       queryTaskGraph: async () => ({ tasks: [], edges: [], next_cursor: null }),
       listApprovalHistory: async () => ({ items: [], next_cursor: null }),
       queryTaskDeliverables: async () => ({ items: [], next_cursor: null }),
+      replay: async () => [],
+      statArtifact: async () => null,
+      openRange: async () => new Uint8Array(),
+      cancelTask: async () => ({ state: "cancellation_pending" as const }),
     })
     await expect(api.taskGraph({ rootId: "root", workspaceDirectory: "C:\\workspace" })).resolves.toEqual({
       tasks: [], edges: [], next_cursor: null,

@@ -145,6 +145,17 @@ export type AgentsListOutput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }>
+    readonly permissionProfile?: {
+      readonly name: string
+      readonly version: string
+      readonly parent?: string
+      readonly rules: ReadonlyArray<{
+        readonly action: string
+        readonly resource: string
+        readonly effect: "allow" | "deny" | "ask"
+      }>
+      readonly sandboxProfile?: string
+    }
   }>
 }
 
@@ -2308,6 +2319,24 @@ export type PermissionsListRequestsOutput = {
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
     readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly decision?: {
+      readonly matchedRule?: {
+        readonly action: string
+        readonly resource: string
+        readonly effect: "allow" | "deny" | "ask"
+      }
+      readonly profile?: string
+      readonly profileVersion?: string
+      readonly requestedAction: string
+      readonly requestedResources: ReadonlyArray<string>
+      readonly agent?: string
+      readonly turn?: string
+      readonly approvalSource: "policy" | "grant" | "user"
+      readonly sandboxProfile?: string
+      readonly grantScope?: "once" | "session" | "project"
+      readonly expiresAt?: number | "Infinity" | "-Infinity" | "NaN"
+      readonly idempotencyKey?: string
+    }
   }>
 }
 
@@ -2410,6 +2439,24 @@ export type PermissionsListOutput = {
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
     readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly decision?: {
+      readonly matchedRule?: {
+        readonly action: string
+        readonly resource: string
+        readonly effect: "allow" | "deny" | "ask"
+      }
+      readonly profile?: string
+      readonly profileVersion?: string
+      readonly requestedAction: string
+      readonly requestedResources: ReadonlyArray<string>
+      readonly agent?: string
+      readonly turn?: string
+      readonly approvalSource: "policy" | "grant" | "user"
+      readonly sandboxProfile?: string
+      readonly grantScope?: "once" | "session" | "project"
+      readonly expiresAt?: number | "Infinity" | "-Infinity" | "NaN"
+      readonly idempotencyKey?: string
+    }
   }>
 }["data"]
 
@@ -2427,14 +2474,38 @@ export type PermissionsGetOutput = {
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
     readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly decision?: {
+      readonly matchedRule?: {
+        readonly action: string
+        readonly resource: string
+        readonly effect: "allow" | "deny" | "ask"
+      }
+      readonly profile?: string
+      readonly profileVersion?: string
+      readonly requestedAction: string
+      readonly requestedResources: ReadonlyArray<string>
+      readonly agent?: string
+      readonly turn?: string
+      readonly approvalSource: "policy" | "grant" | "user"
+      readonly sandboxProfile?: string
+      readonly grantScope?: "once" | "session" | "project"
+      readonly expiresAt?: number | "Infinity" | "-Infinity" | "NaN"
+      readonly idempotencyKey?: string
+    }
   }
 }["data"]
 
 export type PermissionsReplyInput = {
   readonly sessionID: { readonly sessionID: string; readonly requestID: string }["sessionID"]
   readonly requestID: { readonly sessionID: string; readonly requestID: string }["requestID"]
-  readonly reply: { readonly reply: "once" | "always" | "reject"; readonly message?: string | undefined }["reply"]
-  readonly message?: { readonly reply: "once" | "always" | "reject"; readonly message?: string | undefined }["message"]
+  readonly reply: {
+    readonly reply: "once" | "session" | "project" | "always" | "reject"
+    readonly message?: string | undefined
+  }["reply"]
+  readonly message?: {
+    readonly reply: "once" | "session" | "project" | "always" | "reject"
+    readonly message?: string | undefined
+  }["message"]
 }
 
 export type PermissionsReplyOutput = void

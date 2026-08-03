@@ -1628,6 +1628,7 @@ export const node = LayerNode.make({
     SessionRunState.node,
     SessionRevert.node,
     SessionSummary.node,
+    SchedulerService.node,
     SystemPrompt.node,
     LLM.node,
     EventV2Bridge.node,

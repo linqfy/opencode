@@ -98,6 +98,15 @@ export type ApprovalRecord = {
   project_id: string
 }
 export type ApprovalHistoryPage = { items: ApprovalRecord[]; next_cursor: string | null }
+export type ArtifactMetadata = ArtifactRef & {
+  owner_scope: string
+  retention: string
+  credential_class: string
+  ref_count: number
+  created_at: number
+  expires_at: number | null
+}
+export type SidecarTransport = (method: string, params: unknown) => Promise<unknown>
 
 type StreamRead = { done: true; value?: never } | { done: false; value: Uint8Array }
 
@@ -114,15 +123,19 @@ function hexDecode(text: string): Uint8Array {
 }
 
 export class EventsClient {
-  private proc: Subprocess
+  private proc?: Subprocess
   private reader: { read(): Promise<StreamRead> }
+  private transport?: SidecarTransport
   private buffer = ""
   private nextId = 1
   private pending = Promise.resolve()
 
-  private constructor(proc: Subprocess) {
+  private constructor(proc?: Subprocess, transport?: SidecarTransport) {
     this.proc = proc
-    this.reader = (proc.stdout as ReadableStream<Uint8Array>).getReader() as unknown as { read(): Promise<StreamRead> }
+    this.transport = transport
+    this.reader = proc
+      ? ((proc.stdout as ReadableStream<Uint8Array>).getReader() as unknown as { read(): Promise<StreamRead> })
+      : { read: async () => ({ done: true }) }
   }
 
   static start(config: EventServiceConfig): EventsClient {
@@ -143,6 +156,10 @@ export class EventsClient {
     return new EventsClient(proc)
   }
 
+  static fromTransport(transport: SidecarTransport): EventsClient {
+    return new EventsClient(undefined, transport)
+  }
+
   private async call<Result>(method: string, params: unknown): Promise<Result> {
     const result = this.pending.then(() => this.callDirect<Result>(method, params))
     this.pending = result.then(
@@ -153,8 +170,9 @@ export class EventsClient {
   }
 
   private async callDirect<Result>(method: string, params: unknown): Promise<Result> {
+    if (this.transport) return (await this.transport(method, params)) as Result
     const id = this.nextId++
-    ;(this.proc.stdin as { write(value: string): void }).write(JSON.stringify({ id, method, params }) + "\n")
+    ;(this.proc!.stdin as { write(value: string): void }).write(JSON.stringify({ id, method, params }) + "\n")
     const decoder = new TextDecoder()
     while (true) {
       const newline = this.buffer.indexOf("\n")
@@ -179,7 +197,10 @@ export class EventsClient {
     return this.call("propose_commit", { key, kind })
   }
   async listEvents(session: string, sinceSeq = 0, limit = 100): Promise<IndexedEvent[]> {
-    return this.call("list_events", { session, since_seq: sinceSeq, limit })
+    return this.replay(session, sinceSeq, limit)
+  }
+  async replay(session: string, sinceSeq = 0, limit = 100): Promise<IndexedEvent[]> {
+    return this.call("list_events", { session, since_seq: sinceSeq, limit: Math.min(200, Math.max(1, limit)) })
   }
   async rebuildProjections(session: string): Promise<{ count: number }> {
     return this.call("rebuild_projections", { session })
@@ -269,13 +290,36 @@ export class EventsClient {
     })
   }
   async openRange(artifactId: string, scope: string, start = 0, end = Number.MAX_SAFE_INTEGER): Promise<Uint8Array> {
-    const result = await this.call<{ bytes_hex: string }>("open_range", { artifact_id: artifactId, scope, start, end })
+    const result = await this.call<{ bytes_hex: string }>("open_range", {
+      artifact_id: artifactId,
+      scope,
+      start,
+      end: Math.min(end, start + 1_048_576),
+    })
     return hexDecode(result.bytes_hex)
+  }
+  async statArtifact(artifactId: string, scope: string): Promise<ArtifactMetadata | null> {
+    return this.call("stat_artifact", { artifact_id: artifactId, scope })
+  }
+  async cancelTask(
+    rootId: string,
+    taskId: string,
+    workspaceDirectory: string,
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<{ state: "cancelled" | "cancellation_pending" }> {
+    return this.call("cancel_task", {
+      root_id: rootId,
+      task_id: taskId,
+      workspace_directory: workspaceDirectory,
+      reason,
+      idempotency_key: idempotencyKey,
+    })
   }
   async reconcileEffects(uncleanStop = true): Promise<EffectReconciliation[]> {
     return this.call("reconcile_effects", { unclean_stop: uncleanStop })
   }
   stop(): void {
-    this.proc.kill()
+    this.proc?.kill()
   }
 }

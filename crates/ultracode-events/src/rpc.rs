@@ -301,6 +301,65 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             .map_err(|e| e.to_string())
         }
 
+        "cancel_task" => {
+            let root_id = req
+                .params
+                .get("root_id")
+                .and_then(Value::as_str)
+                .ok_or("missing root_id")?;
+            let task_id = req
+                .params
+                .get("task_id")
+                .and_then(Value::as_str)
+                .ok_or("missing task_id")?;
+            let workspace_directory = req
+                .params
+                .get("workspace_directory")
+                .and_then(Value::as_str)
+                .ok_or("missing workspace_directory")?;
+            let reason = req
+                .params
+                .get("reason")
+                .and_then(Value::as_str)
+                .ok_or("missing reason")?;
+            let key = req
+                .params
+                .get("idempotency_key")
+                .and_then(Value::as_str)
+                .ok_or("missing idempotency_key")?;
+            if !is_absolute_workspace(workspace_directory) {
+                return Err("workspace_directory must be absolute".into());
+            }
+            if !state
+                .projections
+                .root_matches(root_id, workspace_directory)
+                .map_err(|e| e.to_string())?
+            {
+                return Err(
+                    "task cancellation authorization failed: root workspace mismatch".into(),
+                );
+            }
+            if state.commit.record_for_key(key).is_some() {
+                return Ok(json!({ "state": "cancellation_pending" }));
+            }
+            let kind = EventKind::TaskCancellationRequested {
+                root_id: root_id.into(),
+                task_id: task_id.into(),
+                reason: reason.into(),
+            };
+            validate_task_event_from_journal(&state.task_journal, &kind)?;
+            let outcome = state.commit.propose(key, kind).map_err(|e| e.to_string())?;
+            let record = match outcome {
+                CommitOutcome::Committed(record) | CommitOutcome::Duplicate(record) => record,
+            };
+            apply_task_event(&mut state.task_journal, &record.event.kind)?;
+            state
+                .projections
+                .index_record(&record)
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "state": "cancellation_pending" }))
+        }
+
         "list_mailbox" => {
             let root_id = req
                 .params

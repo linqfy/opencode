@@ -69,6 +69,7 @@ import { createSessionLineage } from "@/pages/session/session-lineage"
 import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent } from "@/pages/session"
 import { NewHome } from "@/pages/home"
 import { LegacyHome } from "@/pages/home/legacy-home"
+import { CommandCenter } from "@/components/command-center/command-center"
 
 const NewSession = lazy(() => import("@/pages/new-session"))
 
@@ -625,6 +626,7 @@ function Routes(props: { serverScoped?: JSX.Element }) {
         <Route path="/:dir" component={DirectoryLayout}>
           <Route path="/" component={() => <Navigate href="session" />} />
           <Route path="/session/:id?" component={SessionRoute} />
+          <Route path="/command-center" component={CommandCenter} />
         </Route>
       </Route>
       <Show when={settings.general.newLayoutDesigns()}>

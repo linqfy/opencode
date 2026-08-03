@@ -106,6 +106,8 @@ import { sessionLocationLayer } from "@opencode-ai/server/middleware/session-loc
 import { PtyEnvironment } from "@opencode-ai/server/pty-environment"
 import { schemaErrorLayer as v2SchemaErrorLayer } from "@opencode-ai/server/middleware/schema-error"
 import { workspaceHandlers } from "./handlers/workspace"
+import { authorityHandlers } from "./handlers/authority"
+import { SchedulerService } from "@/agent/scheduler-service"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
 import { disposeMiddleware } from "./lifecycle"
@@ -169,6 +171,7 @@ const instanceApiRoutes = (pty = ptyHandlers) =>
       syncHandlers,
       tuiHandlers,
       workspaceHandlers,
+      authorityHandlers,
     ]),
   )
 
@@ -267,6 +270,7 @@ const app = LayerNode.group([
   ProjectV2.node,
   ProjectCopy.node,
   PtyTicket.node,
+  SchedulerService.node,
 ])
 
 export function createRoutes(
