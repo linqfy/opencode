@@ -1,7 +1,8 @@
 import { Agent } from "@/agent/agent"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import type { ForkMode } from "@ultracode/agents"
+import { WaitTimeoutError } from "@ultracode/agents"
+import type { ForkMode, TaskTerminalOutcome } from "@ultracode/agents"
 import DESCRIPTION from "./task.txt"
 import { ToolJsonSchema } from "./json-schema"
 import * as Tool from "./tool"
@@ -23,6 +24,7 @@ export interface TaskSchedulerAdapter {
     taskId: string
     reason: string
   }): Effect.Effect<TaskSchedulerAdapter.Cancellation, Error>
+  wait(input: { rootId: string; taskId: string; timeoutMs: number }): Effect.Effect<TaskTerminalOutcome, Error>
 }
 
 export namespace TaskSchedulerAdapter {
@@ -88,6 +90,9 @@ const BaseParameterFields = {
   timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)).annotate({
     description: "Execution budget: maximum runtime in milliseconds",
   }),
+  waitMs: Schema.optional(Schema.Int.check(Schema.isLessThanOrEqualTo(600_000))).annotate({
+    description: "Wait up to this many milliseconds for a terminal task outcome; returns the deliverable summary",
+  }),
   task_id: Schema.optional(Schema.String).annotate({
     description: "Set this only to resume a previous scheduler task.",
   }),
@@ -114,6 +119,29 @@ function renderOutput(handle: TaskSchedulerAdapter.Handle) {
     ...(handle.evidence.testSummary ? [`Tests: ${handle.evidence.testSummary}`] : []),
     ...(handle.evidence.blockedReason ? [`Blocked: ${handle.evidence.blockedReason}`] : []),
     "</task_result>",
+    "</task>",
+  ].join("\n")
+}
+
+function renderOutcome(outcome: TaskTerminalOutcome) {
+  const deliverable = outcome.deliverable
+  const summary = (deliverable?.summary ?? outcome.state).slice(0, 4_096)
+  const changedPaths = deliverable?.changed_paths ?? []
+  return [
+    `<task id="${outcome.taskId}" state="${outcome.state}">`,
+    `<summary>${summary}</summary>`,
+    "<task_result>",
+    summary,
+    ...(changedPaths.length ? [`Changed paths: ${changedPaths.join(", ")}`] : []),
+    "</task_result>",
+    "</task>",
+  ].join("\n")
+}
+
+function renderTimedOut(handle: TaskSchedulerAdapter.Handle, waitMs: number) {
+  return [
+    `<task id="${handle.taskId}" state="running">`,
+    `<summary>Task is still running after ${waitMs}ms; task id: ${handle.taskId}</summary>`,
     "</task>",
   ].join("\n")
 }
@@ -184,7 +212,19 @@ export const TaskTool = Tool.define(
       const cancel = () => scheduler.cancel({ rootId: handle.rootId, taskId: handle.taskId, reason: "parent aborted" })
       const onAbort = () => void Effect.runFork(cancel())
       ctx.abort.addEventListener("abort", onAbort, { once: true })
-      return { title: params.description, metadata, output: renderOutput(handle) }
+      if (params.waitMs === undefined) return { title: params.description, metadata, output: renderOutput(handle) }
+
+      const outcome = yield* scheduler
+        .wait({ rootId: handle.rootId, taskId: handle.taskId, timeoutMs: params.waitMs })
+        .pipe(
+          Effect.catchIf(
+            (error): error is WaitTimeoutError => error instanceof WaitTimeoutError,
+            () => Effect.succeed(undefined),
+          ),
+        )
+      if (outcome === undefined)
+        return { title: params.description, metadata, output: renderTimedOut(handle, params.waitMs) }
+      return { title: params.description, metadata, output: renderOutcome(outcome) }
     })
 
     return {

@@ -81,6 +81,7 @@ function adapter(overrides: Partial<TaskSchedulerAdapter.Handle> = {}) {
         }
       }),
     cancel: (input) => Effect.sync(() => (cancelled.push(input), { state: "cancellation_pending" as const })),
+    wait: () => Effect.succeed({ taskId: "task_child", state: "completed" as const }),
   }
   return { service, scheduled, cancelled }
 }
@@ -247,6 +248,7 @@ describe("tool.task", () => {
           context(chat, assistant, {
             schedule: () => Effect.die(new Error("scheduler unavailable")),
             cancel: () => Effect.succeed({ state: "cancellation_pending" as const }),
+            wait: () => Effect.succeed({ taskId: "task_child", state: "completed" as const }),
           }),
         )
         .pipe(Effect.exit)

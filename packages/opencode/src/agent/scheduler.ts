@@ -566,6 +566,16 @@ export function createTaskSchedulerAdapter(input: {
         if (!cancellation.observed) return { state: "cancellation_pending" } as const
         return { state: "cancellation_pending" } as const
       }),
+    wait: (request) =>
+      Effect.tryPromise({
+        try: () =>
+          input.scheduler.waitForTasks({
+            rootId: request.rootId,
+            taskIds: [request.taskId],
+            timeoutMs: request.timeoutMs,
+          }),
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }).pipe(Effect.map((outcomes) => outcomes.at(0)!)),
   }
 }
 
