@@ -124,6 +124,31 @@ describe("MemorySource", () => {
     }),
   )
 
+  const capped = new ClearableMemoryStore()
+  const cappedIt = makeIt(capped)
+
+  cappedIt.effect("renders the omitted-memories counter when the count cap drops records", () =>
+    Effect.gen(function* () {
+      for (const index of Array.from({ length: 7 }, (_, index) => index)) {
+        yield* Effect.promise(() => capped.upsert(record(`t${index}`, { rawMemory: `Title ${index}` })))
+      }
+      const registry = yield* SystemContextRegistry.Service
+      const initialized = yield* SystemContext.initialize(yield* registry.load())
+
+      expect(initialized.baseline).toBe(
+        [
+          "## Memory",
+          "- Title 0 (today)",
+          "- Title 1 (today)",
+          "- Title 2 (today)",
+          "- Title 3 (today)",
+          "- Title 4 (today)",
+          "+2 more memories",
+        ].join("\n"),
+      )
+    }),
+  )
+
   const removed = new ClearableMemoryStore()
   const removedIt = makeIt(removed)
 
