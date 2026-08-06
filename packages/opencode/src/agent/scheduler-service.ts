@@ -76,6 +76,14 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SchedulerService") {}
 
+export class SchedulerUnavailableError extends Error {
+  readonly _tag = "SchedulerUnavailableError"
+  constructor(message: string) {
+    super(message)
+    this.name = "SchedulerUnavailableError"
+  }
+}
+
 export function createReadApi(client: ReadClient): ReadApi {
   return {
     taskGraph: (input) => client.queryTaskGraph(input.rootId, input.workspaceDirectory, input.cursor, input.limit),
@@ -196,10 +204,10 @@ export const layer = Layer.unwrap(
       exists: (file) => Bun.file(file).size > 0,
     })
     if (!sidecarBin)
-      return Layer.effect(Service, Effect.fail(new Error(`ultracode-events sidecar not found at ${developmentBin}`)))
+      return degradedLayer(`ultracode-events sidecar unavailable: no binary found at ${developmentBin}; set ULTRACODE_EVENTS_SIDECAR_BIN to a valid sidecar binary path`)
     const exists = yield* Effect.promise(() => Bun.file(sidecarBin).exists())
     if (!exists)
-      return Layer.effect(Service, Effect.fail(new Error(`ultracode-events sidecar not found at ${sidecarBin}`)))
+      return degradedLayer(`ultracode-events sidecar unavailable: no binary found at ${sidecarBin}; set ULTRACODE_EVENTS_SIDECAR_BIN to a valid sidecar binary path`)
     const worktree = yield* Worktree.Service
     const audit = yield* EventV2.Service
     return layerWith({
@@ -291,6 +299,18 @@ export const layer = Layer.unwrap(
     })
   }),
 )
+
+function degradedLayer(message: string) {
+  return Layer.effect(
+    Service,
+    Effect.succeed(
+      Service.of({
+        adapter: Effect.fail(new SchedulerUnavailableError(message)),
+        read: Effect.fail(new SchedulerUnavailableError(message)),
+      }),
+    ),
+  )
+}
 
 export const node = makeGlobalNode({
   service: Service,
