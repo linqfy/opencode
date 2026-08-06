@@ -61,6 +61,8 @@ Pass `--skip-sidecar` to skip the sidecar step entirely (CI jobs that only need 
 
 Cross-target builds require the matching Rust target toolchain AND a cross linker/C compiler (e.g. `aarch64-linux-gnu-gcc`); when either is unavailable the build is skipped with a warning log and does not fail the CLI build. The host target is mandatory: if its sidecar build fails, the whole build exits non-zero.
 
+In CI, `.github/workflows/publish.yml`'s `build-cli` job installs the stable Rust toolchain (`dtolnay/rust-toolchain@stable`) and caches cargo so the sidecar is packaged for every release binary.
+
 The sidecar is discovered at runtime by `@ultracode/events-client` (`resolveSidecarBin`) in this order:
 
 1. `ULTRACODE_EVENTS_SIDECAR_BIN` environment override (hard error if it is set but not executable).

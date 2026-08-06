@@ -86,6 +86,14 @@ jobs:
           opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
           opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo sidecar builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-opencode-sidecar
+
       - name: Build
         id: build
         run: |

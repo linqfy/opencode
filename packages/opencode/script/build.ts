@@ -163,6 +163,8 @@ async function buildSidecarForTarget(item: { os: string; arch: "arm64" | "x64"; 
   try {
     await $`rustup target add ${triple}`.quiet().catch(() => undefined)
     await $`cargo build --release -p ultracode-events --target ${triple}`
+    await $`cp ${sourcePath} ${destPath}`
+    console.log(`Staged sidecar: ${destPath} (provenance: cargo target/${triple}/release)`)
   } catch (error) {
     if (isHost) {
       console.error(`Sidecar build failed for host target ${triple}:`, error)
@@ -171,8 +173,6 @@ async function buildSidecarForTarget(item: { os: string; arch: "arm64" | "x64"; 
     console.warn(`Skipping sidecar for ${name}: ${triple} toolchain unavailable (${String(error).split("\n").at(-1)})`)
     return
   }
-  await $`cp ${sourcePath} ${destPath}`
-  console.log(`Staged sidecar: ${destPath} (provenance: cargo target/${triple}/release)`)
 }
 
 async function verifySidecarPing(sidecarPath: string, name: string) {
