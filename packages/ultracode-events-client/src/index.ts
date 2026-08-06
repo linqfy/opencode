@@ -156,6 +156,10 @@ export class EventsClient {
     return new EventsClient(proc)
   }
 
+  static attach(proc: Subprocess): EventsClient {
+    return new EventsClient(proc)
+  }
+
   static fromTransport(transport: SidecarTransport): EventsClient {
     return new EventsClient(undefined, transport)
   }
@@ -192,6 +196,9 @@ export class EventsClient {
 
   async ping(): Promise<{ ok: boolean }> {
     return this.call("ping", {})
+  }
+  async request(method: string, params: unknown): Promise<unknown> {
+    return this.call(method, params)
   }
   async proposeCommit(key: string, kind: unknown): Promise<ProposeResult> {
     return this.call("propose_commit", { key, kind })
