@@ -1,6 +1,6 @@
 import path from "path"
 import { Context, Effect, Exit, Layer, Scope } from "effect"
-import { EventsClient, type EventServiceConfig } from "@ultracode/events-client"
+import { EventsClient, resolveSidecarBin, type EventServiceConfig } from "@ultracode/events-client"
 import { createScheduler } from "@ultracode/agents"
 import { Global } from "@opencode-ai/core/global"
 import { AgentV2 } from "@opencode-ai/core/agent"
@@ -111,16 +111,6 @@ export function eventServicePaths() {
   }
 }
 
-export function resolveSidecarBin(input: {
-  readonly environment: { readonly ULTRACODE_EVENTS_SIDECAR_BIN?: string }
-  readonly developmentBin: string
-  readonly exists: (file: string) => boolean
-}) {
-  if (input.environment.ULTRACODE_EVENTS_SIDECAR_BIN) return input.environment.ULTRACODE_EVENTS_SIDECAR_BIN
-  if (input.exists(input.developmentBin)) return input.developmentBin
-  return undefined
-}
-
 export const layerWith = (input: {
   readonly sidecarBin: string
   readonly paths: Pick<EventServiceConfig, "journalDir" | "db" | "artifacts">
@@ -196,28 +186,24 @@ export const layerWith = (input: {
     }),
   )
 
-const developmentBin = path.join(
-  import.meta.dir,
-  "../../../../target/debug",
-  process.platform === "win32" ? "sidecar.exe" : "sidecar",
-)
-
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
-    const sidecarBin = resolveSidecarBin({
-      environment: process.env as { readonly ULTRACODE_EVENTS_SIDECAR_BIN?: string },
-      developmentBin,
-      exists: (file) => Bun.file(file).size > 0,
-    })
-    if (!sidecarBin)
-      return degradedLayer(`ultracode-events sidecar unavailable: no binary found at ${developmentBin}; set ULTRACODE_EVENTS_SIDECAR_BIN to a valid sidecar binary path`)
-    const exists = yield* Effect.promise(() => Bun.file(sidecarBin).exists())
-    if (!exists)
-      return degradedLayer(`ultracode-events sidecar unavailable: no binary found at ${sidecarBin}; set ULTRACODE_EVENTS_SIDECAR_BIN to a valid sidecar binary path`)
+    const resolved = yield* Effect.tryPromise({
+      try: () => resolveSidecarBin({ env: process.env }),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    }).pipe(
+      Effect.match({
+        onFailure: (error) => ({ ok: false as const, message: error.message }),
+        onSuccess: (bin) => ({ ok: true as const, bin }),
+      }),
+    )
+    if (!resolved.ok) {
+      return degradedLayer(`ultracode-events sidecar unavailable: ${resolved.message}`)
+    }
     const worktree = yield* Worktree.Service
     const audit = yield* EventV2.Service
     return layerWith({
-      sidecarBin,
+      sidecarBin: resolved.bin,
       paths: eventServicePaths(),
       start: EventsClient.start,
       audit,

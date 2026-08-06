@@ -330,3 +330,7 @@ export class EventsClient {
     this.proc?.kill()
   }
 }
+
+export { resolveSidecarBin, SidecarNotFoundError } from "./resolve"
+export { startSupervised, SidecarBufferOverflowError } from "./supervisor"
+export type { SupervisedClient, StartSupervisedOptions, SupervisedHealth } from "./supervisor"

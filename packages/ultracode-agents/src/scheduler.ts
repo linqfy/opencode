@@ -253,8 +253,9 @@ export function createScheduler(client: SchedulerEventClient) {
             }
           })
         }
-        if (Date.now() >= deadline) throw new WaitTimeoutError(pending)
-        await Bun.sleep(delay)
+        const now = Date.now()
+        if (now >= deadline) throw new WaitTimeoutError(pending)
+        await Bun.sleep(Math.min(delay, deadline - now))
         delay = Math.min(delay * 1.5, 1000)
       }
     },

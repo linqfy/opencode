@@ -171,6 +171,8 @@ class Supervisor {
     if (this.maxRestarts !== undefined && this.restarts > this.maxRestarts) {
       this.state = "down"
       this.rejectFirstOk?.(new Error("sidecar restart limit exceeded"))
+      for (const item of this.queue) item.reject(new Error("client disposed"))
+      this.queue = []
       return
     }
     const delay = BACKOFFS[Math.min(this.backoffIndex, BACKOFFS.length - 1)]!
@@ -194,6 +196,7 @@ class Supervisor {
         } catch (error) {
           if (isTransportError(error) && this.health() !== "down") {
             this.state = "restarting"
+            this.proc?.kill()
             return
           }
           this.queue.shift()

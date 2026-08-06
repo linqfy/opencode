@@ -101,4 +101,25 @@ describe("startSupervised", () => {
     await expect(pending).resolves.toBeTruthy()
     await client.dispose()
   })
+
+  test("queued command rejects instead of hanging when the restart budget is exhausted", async () => {
+    const client = await startSupervised({
+      journalDir: mkdtempSync(path.join(tmpdir(), "sc-")),
+      maxRestarts: 0,
+      spawnCommand: fixtureSpawn("die-on-first-commit").spawnCommand,
+    })
+    const pending = client.proposeCommit("key-exhausted", { kind: "noop" })
+    const outcome = await Promise.race([
+      pending.then(
+        () => "resolved",
+        (error: unknown) => error,
+      ),
+      Bun.sleep(5000).then(() => "hung"),
+    ])
+    expect(outcome).toBeInstanceOf(Error)
+    await expect(pending).rejects.toBeInstanceOf(Error)
+    expect(client.health()).toBe("down")
+    expect(client.restartCount()).toBe(1)
+    await client.dispose()
+  })
 })

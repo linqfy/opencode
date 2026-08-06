@@ -47,7 +47,7 @@ Deferred to runtime integration (Stage 3): MessagePack framing and credit-based 
 
 ## Packaging
 
-The `opencode` CLI build (`packages/opencode/script/build.ts`) stages the sidecar next to each release binary so a compiled `opencode` can supervise it without extra install steps.
+The `opencode` CLI build (`packages/opencode/script/build.ts`) stages the sidecar next to the host release binary so a compiled `opencode` can supervise it without extra install steps.
 
 Per target, within the `dist/<name>/bin/` step:
 
@@ -61,7 +61,7 @@ Pass `--skip-sidecar` to skip the sidecar step entirely (CI jobs that only need 
 
 Cross-target builds require the matching Rust target toolchain AND a cross linker/C compiler (e.g. `aarch64-linux-gnu-gcc`); when either is unavailable the build is skipped with a warning log and does not fail the CLI build. The host target is mandatory: if its sidecar build fails, the whole build exits non-zero.
 
-In CI, `.github/workflows/publish.yml`'s `build-cli` job installs the stable Rust toolchain (`dtolnay/rust-toolchain@stable`) and caches cargo so the sidecar is packaged for every release binary.
+In CI, `.github/workflows/publish.yml`'s `build-cli` job installs the stable Rust toolchain (`dtolnay/rust-toolchain`) and caches cargo. On the single ubuntu runner only the host (`x86_64-linux-gnu`) sidecar builds; darwin/win32/arm64/musl cross-targets warn+skip as documented above, so the sidecar ships for the host release binary today. Cross-target packaging is a follow-up requiring per-target Rust toolchains and cross linkers on the CI runners.
 
 The sidecar is discovered at runtime by `@ultracode/events-client` (`resolveSidecarBin`) in this order:
 

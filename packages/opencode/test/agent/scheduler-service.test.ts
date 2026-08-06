@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
-import { SchedulerService, createReadApi, resolveSidecarBin } from "../../src/agent/scheduler-service"
+import { Effect, Layer } from "effect"
+import { existsSync } from "node:fs"
+import path from "node:path"
+import { EventV2 } from "@opencode-ai/core/event"
+import { SchedulerService, createReadApi } from "../../src/agent/scheduler-service"
+import { Worktree } from "@/worktree"
 
 const runtime = {
   parentLocation: () => Effect.succeed({ directory: "/workspace" }),
@@ -40,14 +44,26 @@ describe("SchedulerService", () => {
       items: [], next_cursor: null,
     })
   })
-  test("prefers the explicit sidecar binary over the development binary", () => {
-    expect(
-      resolveSidecarBin({
-        environment: { ULTRACODE_EVENTS_SIDECAR_BIN: "/configured/sidecar" },
-        developmentBin: "/development/sidecar",
-        exists: () => false,
-      }),
-    ).toBe("/configured/sidecar")
+  test("layer resolves the repo dev sidecar when no env override is set", async () => {
+    const previous = process.env.ULTRACODE_EVENTS_SIDECAR_BIN
+    delete process.env.ULTRACODE_EVENTS_SIDECAR_BIN
+    try {
+      if (!existsSync(path.join(import.meta.dir, "..", "..", "..", "..", "target", "debug", process.platform === "win32" ? "sidecar.exe" : "sidecar"))) return
+      const deps = Layer.mergeAll(
+        Layer.mock(Worktree.Service, {}),
+        Layer.mock(EventV2.Service, { listen: () => Effect.succeed(Effect.void) }),
+      )
+      await expect(
+        Effect.runPromise(
+          Effect.scoped(SchedulerService.Service.use((service) => service.adapter)).pipe(
+            Effect.provide(SchedulerService.layer.pipe(Layer.provide(deps))),
+          ),
+        ),
+      ).resolves.toBeTruthy()
+    } finally {
+      if (previous === undefined) delete process.env.ULTRACODE_EVENTS_SIDECAR_BIN
+      else process.env.ULTRACODE_EVENTS_SIDECAR_BIN = previous
+    }
   })
 
   test("fails closed when startup ping fails", async () => {
