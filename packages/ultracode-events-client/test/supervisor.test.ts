@@ -67,6 +67,20 @@ describe("startSupervised", () => {
     await Promise.allSettled([a, b])
   })
 
+  test("healthy burst beyond bufferLimit never overflows and all calls resolve", async () => {
+    const { spawnCommand, recordPath } = fixtureSpawn()
+    const client = await startSupervised({
+      journalDir: mkdtempSync(path.join(tmpdir(), "sc-")),
+      bufferLimit: 2,
+      spawnCommand,
+    })
+    expect(client.health()).toBe("ok")
+    const pings = Array.from({ length: 7 }, () => client.ping())
+    await expect(Promise.all(pings)).resolves.toBeTruthy()
+    await waitFor(async () => (await countRecords(recordPath, "ping")) >= 8)
+    await client.dispose()
+  })
+
   test("queued command survives a death during flush and completes after the next restart", async () => {
     const { spawnCommand } = fixtureSpawn("die-on-first-commit")
     const client = await startSupervised({ journalDir: mkdtempSync(path.join(tmpdir(), "sc-")), spawnCommand })

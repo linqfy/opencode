@@ -109,7 +109,9 @@ class Supervisor {
 
   route(method: string, args: unknown[]): Promise<unknown> {
     if (this.state === "down") return Promise.reject(new Error("client disposed"))
-    if (this.queue.length >= this.bufferLimit) return Promise.reject(new SidecarBufferOverflowError())
+    if (this.state !== "ok" && this.queue.length >= this.bufferLimit) {
+      return Promise.reject(new SidecarBufferOverflowError())
+    }
     return new Promise<unknown>((resolve, reject) => {
       this.queue.push({ method, args, resolve, reject })
       if (this.state === "ok") void this.flushQueue()
