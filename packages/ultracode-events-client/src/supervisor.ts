@@ -60,6 +60,7 @@ class Supervisor {
   private restarts = 0
   private backoffIndex = 0
   private queue: QueuedCall[] = []
+  private flushing = false
   private disposed = false
   private resolveFirstOk?: () => void
   private rejectFirstOk?: (reason: unknown) => void
@@ -107,11 +108,11 @@ class Supervisor {
   }
 
   route(method: string, args: unknown[]): Promise<unknown> {
-    if (this.state === "ok") return this.invokeOnCurrent(method, args)
     if (this.state === "down") return Promise.reject(new Error("client disposed"))
     if (this.queue.length >= this.bufferLimit) return Promise.reject(new SidecarBufferOverflowError())
     return new Promise<unknown>((resolve, reject) => {
       this.queue.push({ method, args, resolve, reject })
+      if (this.state === "ok") void this.flushQueue()
     })
   }
 
@@ -154,7 +155,7 @@ class Supervisor {
     this.state = "ok"
     this.backoffIndex = 0
     this.resolveFirstOk?.()
-    this.flushQueue()
+    void this.flushQueue()
   }
 
   private onExit(generation: number, code: number): void {
@@ -178,11 +179,27 @@ class Supervisor {
     })
   }
 
-  private flushQueue(): void {
-    const items = this.queue
-    this.queue = []
-    for (const item of items) {
-      this.invokeOnCurrent(item.method, item.args).then(item.resolve, item.reject)
+  private async flushQueue(): Promise<void> {
+    if (this.flushing) return
+    this.flushing = true
+    try {
+      while (this.queue.length > 0 && this.state === "ok") {
+        const item = this.queue[0]!
+        try {
+          const value = await this.invokeOnCurrent(item.method, item.args)
+          this.queue.shift()
+          item.resolve(value)
+        } catch (error) {
+          if (isTransportError(error) && this.health() !== "down") {
+            this.state = "restarting"
+            return
+          }
+          this.queue.shift()
+          item.reject(error)
+        }
+      }
+    } finally {
+      this.flushing = false
     }
   }
 
@@ -195,6 +212,10 @@ class Supervisor {
   private killForTest(): void {
     if (!this.disposed) this.proc?.kill()
   }
+}
+
+function isTransportError(error: unknown): boolean {
+  return error instanceof Error && error.message === "sidecar closed stdout"
 }
 
 function supervisedProxy(owner: Supervisor): SupervisedClient {

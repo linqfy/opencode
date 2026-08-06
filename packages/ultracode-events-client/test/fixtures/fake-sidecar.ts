@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
-import { appendFileSync } from "node:fs"
+import { appendFileSync, existsSync, writeFileSync } from "node:fs"
 
-const recordPath = process.argv[process.argv.length - 1]!
+const args = process.argv.slice(2)
+const recordPath = args[1]!
+const dieOnFirstCommit = args[2] === "die-on-first-commit"
+const dieOnceFile = recordPath + ".died"
 const dieAfterRaw = process.env.FAKE_SIDECAR_DIE_AFTER
 const dieAfter = dieAfterRaw === undefined ? undefined : Number(dieAfterRaw)
 
@@ -19,6 +22,10 @@ function resultFor(method: string): unknown {
 async function answer(raw: string): Promise<void> {
   const request = JSON.parse(raw) as { id: number; method: string; params: unknown }
   appendFileSync(recordPath, `${request.method}\t${request.id}\t${JSON.stringify(request.params)}\n`)
+  if (dieOnFirstCommit && request.method === "propose_commit" && !existsSync(dieOnceFile)) {
+    writeFileSync(dieOnceFile, "")
+    process.exit(1)
+  }
   await Bun.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: resultFor(request.method) })}\n`)
   handled += 1
   if (dieAfter !== undefined && handled >= dieAfter) process.exit(1)
