@@ -84,7 +84,7 @@ export class SchedulerUnavailableError extends Error {
   }
 }
 
-export function createReadApi(client: ReadClient): ReadApi {
+export function createReadApi(client: ReadClient, adapter?: TaskSchedulerAdapter): ReadApi {
   return {
     taskGraph: (input) => client.queryTaskGraph(input.rootId, input.workspaceDirectory, input.cursor, input.limit),
     approvals: (input) => client.listApprovalHistory(input.workspaceDirectory, input.projectId, input.cursor, input.limit),
@@ -92,7 +92,13 @@ export function createReadApi(client: ReadClient): ReadApi {
     replay: (input) => client.replay(input.session, input.sinceSeq, input.limit),
     artifact: (input) => client.statArtifact(input.artifactId, input.scope),
     artifactRange: (input) => client.openRange(input.artifactId, input.scope, input.start, input.end),
-    cancel: (input) => client.cancelTask(input.rootId, input.taskId, input.workspaceDirectory, input.reason, input.idempotencyKey),
+    // The adapter derives its own cancellation key (task:<root>:<task>:cancel) so it pairs with
+    // finalize's acknowledgement key; the caller's idempotencyKey and workspaceDirectory are only
+    // used by the degraded sidecar path below.
+    cancel: (input) =>
+      adapter
+        ? Effect.runPromise(adapter.cancel({ rootId: input.rootId, taskId: input.taskId, reason: input.reason }))
+        : client.cancelTask(input.rootId, input.taskId, input.workspaceDirectory, input.reason, input.idempotencyKey),
   }
 }
 
@@ -185,7 +191,7 @@ export const layerWith = (input: {
       )
       return Service.of({
         adapter: adapter.pipe(Effect.map((value) => value.adapter)),
-        read: adapter.pipe(Effect.map((value) => createReadApi(value.client))),
+        read: adapter.pipe(Effect.map((value) => createReadApi(value.client, value.adapter))),
       })
     }),
   )
