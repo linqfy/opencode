@@ -346,6 +346,11 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "minimum": -9007199254740991,
       "type": "integer",
     },
+    "waitMs": {
+      "description": "Wait up to this many milliseconds for a terminal task outcome; returns the deliverable summary",
+      "maximum": 600000,
+      "type": "integer",
+    },
   },
   "required": [
     "description",
