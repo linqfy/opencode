@@ -45,6 +45,31 @@ State opens idempotently — a restart rebuilds projections and the effect index
 
 Deferred to runtime integration (Stage 3): MessagePack framing and credit-based backpressure (`worker.v1` hardening), Electron main-process supervision/respawn wiring, and routing the live session flow through the sidecar.
 
+## Packaging
+
+The `opencode` CLI build (`packages/opencode/script/build.ts`) stages the sidecar next to each release binary so a compiled `opencode` can supervise it without extra install steps.
+
+Per target, within the `dist/<name>/bin/` step:
+
+1. `rustup target add <triple>` (best-effort; already-installed targets are skipped).
+2. `cargo build --release -p ultracode-events --target <triple>`.
+3. Copy `target/<triple>/release/sidecar` (`.exe` on Windows) to `dist/<name>/bin/sidecar`.
+
+The `item` target in the build matrix maps to a Rust triple: `os` `win32` → `{x86_64,aarch64}-pc-windows-msvc`, `darwin` → `{x86_64,aarch64}-apple-darwin`, `linux` with `abi: "musl"` → `{x86_64,aarch64}-unknown-linux-musl`, and plain `linux` → `{x86_64,aarch64}-unknown-linux-gnu`.
+
+Pass `--skip-sidecar` to skip the sidecar step entirely (CI jobs that only need the CLI binary).
+
+Cross-target builds require the matching Rust target toolchain AND a cross linker/C compiler (e.g. `aarch64-linux-gnu-gcc`); when either is unavailable the build is skipped with a warning log and does not fail the CLI build. The host target is mandatory: if its sidecar build fails, the whole build exits non-zero.
+
+The sidecar is discovered at runtime by `@ultracode/events-client` (`resolveSidecarBin`) in this order:
+
+1. `ULTRACODE_EVENTS_SIDECAR_BIN` environment override (hard error if it is set but not executable).
+2. Bundled candidates: the executable's own directory (`dirname(process.execPath)`, the packaged `dist/<name>/bin` layout) then `import.meta.dir/../../bin` (the dev-layout drop-in `packages/bin`).
+3. `target/release`/`target/debug` walking up from the cwd.
+4. `PATH` lookup for `ultracode-events-sidecar`.
+
+When nothing is found, resolution throws a `SidecarNotFoundError` that lists every probed path.
+
 ## Legacy import (Stage 2e)
 
 `import.rs` + `src/bin/import-legacy.rs` import an existing OpenCode SQLite database (`session` + `session_message` tables) into the journal as `LegacySessionImported` / `LegacyMessageImported` events. OpenCode message `data` is carried as opaque raw JSON text — the importer never decodes OpenCode's schema, so fidelity is total and coupling is zero.

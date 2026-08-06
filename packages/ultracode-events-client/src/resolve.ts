@@ -39,7 +39,10 @@ async function isExecutable(p: string): Promise<boolean> {
 
 function bundledCandidates(): string[] {
   const name = process.platform === "win32" ? "sidecar.exe" : "sidecar"
-  return [join(import.meta.dir, "..", "..", "bin", name)]
+  // In a bun-compiled binary import.meta.dir resolves to the virtual embedded fs
+  // (e.g. /$bunfs/root), so the packaged layout ships the sidecar next to the
+  // executable and is located via process.execPath's directory.
+  return [join(dirname(process.execPath), name), join(import.meta.dir, "..", "..", "bin", name)]
 }
 
 function targetCandidates(cwd: string): string[] {

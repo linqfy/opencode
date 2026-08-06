@@ -2,12 +2,16 @@
 
 import { $ } from "bun"
 import path from "path"
+import os from "os"
+import { mkdtemp, rm } from "node:fs/promises"
 import { fileURLToPath } from "url"
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
+import { EventsClient } from "@ultracode/events-client"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const dir = path.resolve(__dirname, "..")
+const repoRoot = path.resolve(dir, "../..")
 
 process.chdir(dir)
 
@@ -22,6 +26,7 @@ const skipInstall = process.argv.includes("--skip-install")
 const sourcemapsFlag = process.argv.includes("--sourcemaps")
 const plugin = createSolidTransformPlugin()
 const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
+const skipSidecar = process.argv.includes("--skip-sidecar")
 
 const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
@@ -134,6 +139,65 @@ const targets = singleFlag
     })
   : allTargets
 
+function rustTargetFor(item: { os: string; arch: "arm64" | "x64"; abi?: "musl" }): string {
+  const arch = item.arch === "arm64" ? "aarch64" : "x86_64"
+  if (item.os === "win32") return `${arch}-pc-windows-msvc`
+  if (item.os === "darwin") return `${arch}-apple-darwin`
+  if (item.abi === "musl") return `${arch}-unknown-linux-musl`
+  return `${arch}-unknown-linux-gnu`
+}
+
+function hostRustTarget(): string {
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64"
+  if (process.platform === "win32") return `${arch}-pc-windows-msvc`
+  if (process.platform === "darwin") return `${arch}-apple-darwin`
+  return `${arch}-unknown-linux-gnu`
+}
+
+async function buildSidecarForTarget(item: { os: string; arch: "arm64" | "x64"; abi?: "musl" }, name: string) {
+  const triple = rustTargetFor(item)
+  const isHost = triple === hostRustTarget()
+  const sidecarName = item.os === "win32" ? "sidecar.exe" : "sidecar"
+  const sourcePath = path.join(repoRoot, "target", triple, "release", sidecarName)
+  const destPath = `dist/${name}/bin/${sidecarName}`
+  try {
+    await $`rustup target add ${triple}`.quiet().catch(() => undefined)
+    await $`cargo build --release -p ultracode-events --target ${triple}`
+  } catch (error) {
+    if (isHost) {
+      console.error(`Sidecar build failed for host target ${triple}:`, error)
+      process.exit(1)
+    }
+    console.warn(`Skipping sidecar for ${name}: ${triple} toolchain unavailable (${String(error).split("\n").at(-1)})`)
+    return
+  }
+  await $`cp ${sourcePath} ${destPath}`
+  console.log(`Staged sidecar: ${destPath} (provenance: cargo target/${triple}/release)`)
+}
+
+async function verifySidecarPing(sidecarPath: string, name: string) {
+  console.log(`Running sidecar smoke test: ${sidecarPath} ping`)
+  const dir = await mkdtemp(path.join(os.tmpdir(), "sidecar-build-check-"))
+  try {
+    const client = EventsClient.start({
+      sidecarBin: sidecarPath,
+      journalDir: path.join(dir, "journal"),
+      db: path.join(dir, "events.db"),
+      artifacts: path.join(dir, "artifacts"),
+      session: "smoke",
+    })
+    const result = await client.ping()
+    client.stop()
+    if (!result.ok) throw new Error(`sidecar ping returned ok=false for ${sidecarPath}`)
+    console.log(`Sidecar smoke test passed: ${JSON.stringify(result)}`)
+  } catch (error) {
+    console.error(`Sidecar smoke test failed for ${name}:`, error)
+    process.exit(1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 await $`rm -rf dist`
 
 const binaries: Record<string, string> = {}
@@ -155,6 +219,9 @@ for (const item of targets) {
     .join("-")
   console.log(`building ${name}`)
   await $`mkdir -p dist/${name}/bin`
+  if (!skipSidecar) {
+    await buildSidecarForTarget(item, name)
+  }
 
   const workerPath = "./src/cli/tui/worker.ts"
   const treeSitterWorkerPath = "opentui-tree-sitter-worker.js"
@@ -211,6 +278,9 @@ for (const item of targets) {
     } catch (e) {
       console.error(`Smoke test failed for ${name}:`, e)
       process.exit(1)
+    }
+    if (!skipSidecar) {
+      await verifySidecarPing(`dist/${name}/bin/${item.os === "win32" ? "sidecar.exe" : "sidecar"}`, name)
     }
   }
 
