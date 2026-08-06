@@ -28,7 +28,7 @@ describe("resolveSidecarBin", () => {
 
   test("not found anywhere → error names probed paths and the env hint", async () => {
     try {
-      await resolveSidecarBin({ env: {} })
+      await resolveSidecarBin({ env: {}, cwd: mkdtempSync(path.join(tmpdir(), "sidecar-resolve-")) })
       expect.unreachable("should have thrown")
     } catch (e) {
       expect(e).toBeInstanceOf(SidecarNotFoundError)

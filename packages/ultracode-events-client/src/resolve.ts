@@ -9,7 +9,7 @@ export class SidecarNotFoundError extends Error {
   }
 }
 
-export async function resolveSidecarBin(opts: { env?: NodeJS.ProcessEnv } = {}): Promise<string> {
+export async function resolveSidecarBin(opts: { env?: NodeJS.ProcessEnv; cwd?: string } = {}): Promise<string> {
   const env = opts.env ?? process.env
   const probed: string[] = []
   const envOverride = env.ULTRACODE_EVENTS_SIDECAR_BIN
@@ -18,7 +18,7 @@ export async function resolveSidecarBin(opts: { env?: NodeJS.ProcessEnv } = {}):
     if (await isExecutable(envOverride)) return envOverride
     throw new SidecarNotFoundError(notFoundMessage(probed))
   }
-  const candidates = [...bundledCandidates(), ...targetCandidates(), ...pathCandidates(env)]
+  const candidates = [...bundledCandidates(), ...targetCandidates(opts.cwd ?? process.cwd()), ...pathCandidates(env)]
   for (const candidate of candidates) {
     probed.push(candidate)
     if (await isExecutable(candidate)) return candidate
@@ -42,9 +42,9 @@ function bundledCandidates(): string[] {
   return [join(import.meta.dir, "..", "..", "bin", name)]
 }
 
-function targetCandidates(): string[] {
+function targetCandidates(cwd: string): string[] {
   const candidates: string[] = []
-  let dir = process.cwd()
+  let dir = cwd
   while (true) {
     candidates.push(join(dir, "target", "release", "sidecar"), join(dir, "target", "debug", "sidecar"))
     if (existsSync(join(dir, "target"))) break
