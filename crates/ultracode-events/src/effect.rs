@@ -19,7 +19,7 @@ pub enum ReconciliationPolicy {
 }
 
 impl ReconciliationPolicy {
-    pub fn from_str(value: &str) -> ReconciliationPolicy {
+    pub fn parse(value: &str) -> ReconciliationPolicy {
         match value {
             "idempotent" => ReconciliationPolicy::Idempotent,
             "queryable" => ReconciliationPolicy::Queryable,
@@ -66,7 +66,7 @@ pub fn fold_effects(records: &[Record]) -> Vec<EffectRecord> {
                     idempotency_key: idempotency_key.clone(),
                     tool: tool.clone(),
                     request_hash: request_hash.clone(),
-                    policy: ReconciliationPolicy::from_str(reconciliation_policy),
+                    policy: ReconciliationPolicy::parse(reconciliation_policy),
                     state: EffectState::Prepared,
                     dispatch_identity: None,
                     outcome_hash: None,

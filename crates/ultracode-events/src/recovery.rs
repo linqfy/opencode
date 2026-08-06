@@ -1,5 +1,5 @@
 use crate::event::{hash_from_hex, EventKind, Record, SCHEMA_VERSION};
-use crate::journal::{segment_path, verify_record, JournalWriter, DEFAULT_MAX_SEGMENT_BYTES};
+use crate::journal::{verify_record, JournalWriter, DEFAULT_MAX_SEGMENT_BYTES};
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader};
@@ -105,12 +105,10 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
             ))?;
         let reader = BufReader::new(std::fs::File::open(file)?);
         let mut offset = 0u64;
-        let mut line_no = 0u64;
         let is_last_segment = files.last().map(|p| p == file).unwrap_or(false);
 
-        for line in reader.lines() {
+        for (line_no, line) in reader.lines().enumerate() {
             let line = line?;
-            line_no += 1;
             let line_len = line.len() as u64 + 1;
             let parsed: Result<Record, _> = serde_json::from_str(&line);
             let valid = match &parsed {
@@ -144,7 +142,7 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
                 if !is_final_record {
                     return Err(RecoveryError::CorruptHistory {
                         segment: segment_index,
-                        line: line_no,
+                        line: line_no as u64 + 1,
                         reason,
                     });
                 }
@@ -155,7 +153,7 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
 
             let record = parsed.map_err(|e| RecoveryError::CorruptHistory {
                 segment: segment_index,
-                line: line_no,
+                line: line_no as u64 + 1,
                 reason: e.to_string(),
             })?;
             records.push(record.clone());
@@ -165,7 +163,7 @@ pub fn open(dir: &Path, session: &str) -> Result<OpenedJournal, RecoveryError> {
             }
             prev = hash_from_hex(&record.hash).map_err(|reason| RecoveryError::CorruptHistory {
                 segment: segment_index,
-                line: line_no,
+                line: line_no as u64 + 1,
                 reason,
             })?;
             seq = record.event.seq;

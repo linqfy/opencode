@@ -118,7 +118,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(text: &str) -> Result<Vec<u8>, String> {
-    if text.len() % 2 != 0 {
+    if !text.len().is_multiple_of(2) {
         return Err("hex length must be even".to_string());
     }
     (0..text.len())
@@ -128,11 +128,11 @@ fn hex_decode(text: &str) -> Result<Vec<u8>, String> {
 }
 
 fn retention_from_str(value: &str) -> Retention {
-    Retention::from_str(value).unwrap_or(Retention::Workspace)
+    Retention::parse(value).unwrap_or(Retention::Workspace)
 }
 
 fn credential_from_str(value: &str) -> CredentialClass {
-    CredentialClass::from_str(value).unwrap_or(CredentialClass::Plain)
+    CredentialClass::parse(value).unwrap_or(CredentialClass::Plain)
 }
 
 fn state_name(state: effect::EffectState) -> &'static str {
@@ -999,7 +999,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                 return Err("task depth exceeds 2".into());
             }
             if let Some(parent) = parent_task_id {
-                let parent_task = journal_task(&journal, root_id, parent)?;
+                let parent_task = journal_task(journal, root_id, parent)?;
                 if *depth != parent_task.depth + 1 {
                     return Err("child task depth must equal parent depth plus one".into());
                 }
@@ -1027,7 +1027,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                         .ok_or("task child-pool budget exceeded")?;
                     if reserved
                         .checked_add(*budget)
-                        .map_or(true, |total| total > pool)
+                        .is_none_or(|total| total > pool)
                     {
                         return Err("task child-pool budget exceeded".into());
                     }
@@ -1040,7 +1040,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                 if !seen.insert(dependency) {
                     return Err(format!("duplicate dependency: {dependency}"));
                 }
-                journal_task(&journal, root_id, dependency)?;
+                journal_task(journal, root_id, dependency)?;
             }
         }
         EventKind::TaskStateChanged {
@@ -1049,7 +1049,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             state,
             ..
         } => {
-            let current = &journal_task(&journal, root_id, task_id)?.state;
+            let current = &journal_task(journal, root_id, task_id)?.state;
             if !matches!(
                 (current.as_str(), state.as_str()),
                 ("pending", "running" | "waiting" | "cancelled")
@@ -1068,7 +1068,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             child_pool,
             synthesis,
         } => {
-            let task = journal_task(&journal, root_id, task_id)?;
+            let task = journal_task(journal, root_id, task_id)?;
             if task.reservation.is_some() {
                 return Err("task budget already reserved".into());
             }
@@ -1086,7 +1086,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             amount,
             target,
         } => {
-            let task = journal_task(&journal, root_id, task_id)?;
+            let task = journal_task(journal, root_id, task_id)?;
             if target != "child-pool" {
                 return Err("task budget use must target child-pool".into());
             }
@@ -1097,7 +1097,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                 || task
                     .used
                     .checked_add(*amount)
-                    .map_or(true, |used| used > pool)
+                    .is_none_or(|used| used > pool)
             {
                 return Err("task child-pool budget exceeded".into());
             }
@@ -1108,7 +1108,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             amount,
             target,
         } => {
-            let task = journal_task(&journal, root_id, task_id)?;
+            let task = journal_task(journal, root_id, task_id)?;
             if target != "child-pool"
                 || !matches!(task.state.as_str(), "completed" | "failed" | "cancelled")
                 || *amount > task.budget.saturating_sub(task.reclaimed)
@@ -1120,14 +1120,14 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             root_id, task_id, ..
         } => {
             if matches!(
-                journal_task(&journal, root_id, task_id)?.state.as_str(),
+                journal_task(journal, root_id, task_id)?.state.as_str(),
                 "completed" | "failed" | "cancelled"
             ) {
                 return Err("task is terminal".into());
             }
         }
         EventKind::TaskCancellationObserved { root_id, task_id } => {
-            if journal_task(&journal, root_id, task_id)?.state != "cancelled" {
+            if journal_task(journal, root_id, task_id)?.state != "cancelled" {
                 return Err("task is not cancelled".into());
             }
         }
@@ -1136,7 +1136,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             task_id,
             worktree_id,
         } => {
-            let task = journal_task(&journal, root_id, task_id)?;
+            let task = journal_task(journal, root_id, task_id)?;
             if task.depth == 0 || !task.state_changing || worktree_id.is_empty() {
                 return Err("task is not eligible for a worktree".into());
             }
@@ -1152,7 +1152,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             task_id,
             worktree_id,
         } => {
-            journal_task(&journal, root_id, task_id)?;
+            journal_task(journal, root_id, task_id)?;
             if journal
                 .worktrees
                 .get(&(root_id.clone(), worktree_id.clone()))
@@ -1182,8 +1182,8 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                 test_summary.as_deref(),
                 blocked_reason.as_deref(),
             )?;
-            journal_task(&journal, root_id, sender_task_id)?;
-            journal_task(&journal, root_id, recipient_task_id)?;
+            journal_task(journal, root_id, sender_task_id)?;
+            journal_task(journal, root_id, recipient_task_id)?;
             if journal
                 .messages
                 .contains_key(&(root_id.clone(), message_id.clone()))
@@ -1203,7 +1203,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             message_id,
             recipient_task_id,
         } => {
-            journal_task(&journal, root_id, recipient_task_id)?;
+            journal_task(journal, root_id, recipient_task_id)?;
             if journal
                 .messages
                 .get(&(root_id.clone(), message_id.clone()))
@@ -1221,7 +1221,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             status,
             ..
         } => {
-            let state = &journal_task(&journal, root_id, task_id)?.state;
+            let state = &journal_task(journal, root_id, task_id)?.state;
             if !matches!(state.as_str(), "completed" | "failed" | "cancelled") {
                 return Err(format!(
                     "task deliverable requires terminal task: {task_id}"

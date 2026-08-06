@@ -26,7 +26,7 @@ impl Retention {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Retention> {
+    pub fn parse(value: &str) -> Option<Retention> {
         match value {
             "turn" => Some(Retention::Turn),
             "session" => Some(Retention::Session),
@@ -53,7 +53,7 @@ impl CredentialClass {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<CredentialClass> {
+    pub fn parse(value: &str) -> Option<CredentialClass> {
         match value {
             "plain" => Some(CredentialClass::Plain),
             "encrypted" => Some(CredentialClass::Encrypted),
@@ -251,8 +251,8 @@ impl ArtifactStore {
                     byte_length: byte_length as u64,
                     hash,
                     owner_scope,
-                    retention: Retention::from_str(&retention).unwrap_or(Retention::Workspace),
-                    credential_class: CredentialClass::from_str(&credential_class)
+                    retention: Retention::parse(&retention).unwrap_or(Retention::Workspace),
+                    credential_class: CredentialClass::parse(&credential_class)
                         .unwrap_or(CredentialClass::Plain),
                     ref_count,
                     created_at: created_at as u64,

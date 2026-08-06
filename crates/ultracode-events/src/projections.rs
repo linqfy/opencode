@@ -949,7 +949,7 @@ impl ProjectionStore {
     ) -> Result<TaskGraphPage, rusqlite::Error> {
         let limit = limit.min(200);
         let after = cursor
-            .map(|value| serde_json::from_str::<TaskPageCursor>(value))
+            .map(serde_json::from_str::<TaskPageCursor>)
             .transpose()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         if let Some(after) = &after {
@@ -1123,7 +1123,7 @@ impl ProjectionStore {
     ) -> Result<TaskDeliverablePage, rusqlite::Error> {
         let limit = limit.min(200);
         let after = cursor
-            .map(|value| serde_json::from_str::<TaskPageCursor>(value))
+            .map(serde_json::from_str::<TaskPageCursor>)
             .transpose()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         if let Some(after) = &after {
@@ -1179,7 +1179,7 @@ impl ProjectionStore {
         limit: u64,
     ) -> Result<(Vec<ApprovalRecord>, Option<String>), rusqlite::Error> {
         let cursor = cursor
-            .map(|value| serde_json::from_str::<ApprovalPageCursorOwned>(value))
+            .map(serde_json::from_str::<ApprovalPageCursorOwned>)
             .transpose()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         if let Some(cursor) = &cursor {
