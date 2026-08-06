@@ -1,3 +1,5 @@
+import type { TaskDeliverable } from "./events-client"
+
 export type TaskState = "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled"
 
 export type ForkMode = "none" | "recent" | "full"
@@ -30,3 +32,27 @@ export interface Task extends TaskInput {
 export type Result<Value, Error extends string> =
   | { readonly ok: true; readonly value: Value }
   | { readonly ok: false; readonly error: Error }
+
+export type TaskTerminalOutcome = {
+  readonly taskId: string
+  readonly state: "completed" | "failed" | "cancelled"
+  readonly deliverable?: TaskDeliverable
+}
+
+export class WaitTimeoutError extends Error {
+  readonly _tag = "WaitTimeoutError"
+  readonly pending: readonly string[]
+  constructor(pending: readonly string[], message?: string) {
+    super(message ?? `waitForTasks timed out with pending tasks: ${pending.join(", ")}`)
+    this.name = "WaitTimeoutError"
+    this.pending = pending
+  }
+}
+
+export class UnknownTaskError extends Error {
+  readonly _tag = "UnknownTaskError"
+  constructor(message = "waitForTasks encountered an unknown task id") {
+    super(message)
+    this.name = "UnknownTaskError"
+  }
+}

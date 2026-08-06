@@ -1,7 +1,7 @@
 import { createBudget, type BudgetInput } from "./budget"
 import type { MailboxMessage, SchedulerEventClient, TaskDeliverable, TaskRecord } from "./events-client"
 import { MAX_CHILDREN, MAX_DEPTH, admitTask, transitionTaskState } from "./graph"
-import type { Task, TaskInput, TaskState } from "./types"
+import { UnknownTaskError, WaitTimeoutError, type Task, type TaskInput, type TaskState, type TaskTerminalOutcome } from "./types"
 
 const EVIDENCE_LIMIT = 100
 const MAX_EVIDENCE_TEXT_BYTES = 4_096
@@ -53,6 +53,13 @@ export interface EvidenceQuery {
   readonly recipientTaskId: string
   readonly afterSequence?: number
   readonly limit?: number
+}
+
+export interface WaitForTasksInput {
+  readonly rootId: string
+  readonly taskIds: readonly string[]
+  readonly timeoutMs: number
+  readonly pollMs?: number
 }
 
 export function createScheduler(client: SchedulerEventClient) {
@@ -219,6 +226,36 @@ export function createScheduler(client: SchedulerEventClient) {
       return {
         mailbox: await client.listMailbox(input.rootId, workspace(input.rootId), input.recipientTaskId, input.afterSequence ?? 0, limit),
         deliverables: await client.listTaskDeliverables(input.rootId, workspace(input.rootId), limit),
+      }
+    },
+    waitForTasks: async (input: WaitForTasksInput): Promise<TaskTerminalOutcome[]> => {
+      const workspaceDirectory = workspace(input.rootId)
+      const deadline = Date.now() + input.timeoutMs
+      let delay = input.pollMs ?? 100
+      let firstPoll = true
+      while (true) {
+        const tasks = await client.listTasks(input.rootId, workspaceDirectory, EVIDENCE_LIMIT)
+        if (firstPoll) {
+          firstPoll = false
+          const missing = input.taskIds.find((taskId) => !tasks.some((task) => task.task_id === taskId))
+          if (missing !== undefined) throw new UnknownTaskError()
+        }
+        const pending = input.taskIds.filter((taskId) => !tasks.some((task) => task.task_id === taskId && isTerminal(task.state as TaskState)))
+        if (pending.length === 0) {
+          const deliverables = await client.listTaskDeliverables(input.rootId, workspaceDirectory, EVIDENCE_LIMIT)
+          return input.taskIds.map((taskId) => {
+            const task = tasks.find((candidate) => candidate.task_id === taskId) as TaskRecord & { readonly state: TaskTerminalOutcome["state"] }
+            const deliverable = deliverables.find((candidate) => candidate.task_id === taskId)
+            return {
+              taskId,
+              state: task.state,
+              ...(deliverable === undefined ? {} : { deliverable }),
+            }
+          })
+        }
+        if (Date.now() >= deadline) throw new WaitTimeoutError(pending)
+        await Bun.sleep(delay)
+        delay = Math.min(delay * 1.5, 1000)
       }
     },
   }
