@@ -1,8 +1,8 @@
 import { Context, Effect, Layer } from "effect"
+import { Config } from "@opencode-ai/core/config"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionStore } from "@opencode-ai/core/session/store"
-import { makeGlobalNode } from "@opencode-ai/core/effect/app-node"
-import type { Node } from "@opencode-ai/core/effect/layer-node"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SchedulerService } from "@/agent/scheduler-service"
 import { subscribeMemoryTriggers } from "./triggers"
 import { memoryClaimGuard, runMemoryWorker, type MemoryExtractSeam } from "./worker"
@@ -18,6 +18,14 @@ export const layerWith = (input: { readonly extract: MemoryExtractSeam }) =>
       const scheduler = yield* SchedulerService.Service
       const sessionStore = yield* SessionStore.Service
       const events = yield* EventV2.Service
+      const config = yield* Config.Service
+      const memoryEnabled = (yield* config.entries()).some(
+        (entry) => entry.type === "document" && entry.info.memory?.enabled === true,
+      )
+      if (!memoryEnabled) {
+        yield* Effect.logInfo("memory extraction disabled: memory.enabled is not set")
+        return Service.of({})
+      }
       const client = yield* scheduler.events.pipe(
         Effect.match({
           onFailure: () => null,
@@ -43,10 +51,10 @@ export const layerWith = (input: { readonly extract: MemoryExtractSeam }) =>
 
 // Production wiring uses a fails-closed extractor until an LLM-backed seam is
 // available; claimed jobs fail without writing candidate records.
-export const node = makeGlobalNode({
+export const node = LayerNode.make({
   service: Service,
   layer: layerWith({ extract: async () => undefined }).pipe(Layer.orDie),
-  deps: [SchedulerService.node, SessionStore.node, EventV2.node],
-}) as unknown as Node<Service, never>
+  deps: [Config.node, SchedulerService.node, SessionStore.node, EventV2.node],
+})
 
 export * as MemoryService from "./service"

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect } from "bun:test"
 import { DateTime, Effect, Layer } from "effect"
+import { Config } from "@opencode-ai/core/config"
+import { ConfigMemory } from "@opencode-ai/core/config/memory"
 import { EventV2 } from "@opencode-ai/core/event"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -10,6 +12,8 @@ import { SessionID } from "@opencode-ai/schema/session-id"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import type { MemoryJob } from "@ultracode/events-client"
+import { SchedulerService } from "@/agent/scheduler-service"
+import { MemoryService } from "@/memory/service"
 import { testEffect, pollWithTimeout } from "../lib/effect"
 import {
   EXTRACTOR_VERSION,
@@ -213,14 +217,14 @@ describe("memory worker", () => {
   it.effect("completes a claimed extraction job with redacted candidates", () =>
     Effect.gen(function* () {
       const fake = new FakeMemoryClient()
-      let received: readonly SessionMessage.Message[] = []
+      const received: Array<readonly SessionMessage.Message[]> = []
       const deps: MemoryWorkerDependencies = {
         client: fake,
         sessionStore: fakeStore(),
         claim: memoryClaimGuard(),
         now: () => 1_000,
         extract: async (input) => {
-          received = input
+          received.push(input)
           return {
             rawMemory: "built a tool; api_key=sk-testsecret1234567890",
             rolloutSummary: "summary sk-testsecret1234567890",
@@ -228,7 +232,7 @@ describe("memory worker", () => {
         },
       }
       yield* processClaimedJob(deps, extractionJob())
-      expect(received).toEqual(messages)
+      expect(received[0]).toEqual(messages)
       expect(fake.completed).toEqual([
         {
           key: "memory:mem:ses_1:42",
@@ -293,6 +297,57 @@ describe("memory worker", () => {
         kind: "memory-extracted",
         data: expect.objectContaining({ request_id: "mem:ses_1:42", raw_memory: "key=[REDACTED]" }),
       })
+    }),
+  )
+})
+
+describe("memory service gate", () => {
+  const it = testEffect(Layer.empty)
+
+  const gateEnv = (entries: readonly Config.Entry[]) => {
+    const listeners: Array<(event: EventV2.Payload) => Effect.Effect<void>> = []
+    const client = new FakeMemoryClient()
+    const layer = MemoryService.layerWith({ extract: async () => undefined }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(Config.Service, { entries: () => Effect.succeed([...entries]) }),
+          Layer.mock(SchedulerService.Service, { events: Effect.succeed(client) }),
+          Layer.mock(SessionStore.Service, {}),
+          Layer.mock(EventV2.Service, {
+            listen: (listener) => {
+              listeners.push(listener)
+              return Effect.succeed(Effect.void)
+            },
+          }),
+        ),
+      ),
+      Layer.build,
+    )
+    return { listeners, client, layer }
+  }
+
+  it.effect("does not subscribe triggers or enqueue jobs when memory.enabled is absent", () =>
+    Effect.gen(function* () {
+      const env = gateEnv([])
+      yield* env.layer
+      expect(env.listeners).toHaveLength(0)
+      expect(env.client.enqueued).toHaveLength(0)
+    }),
+  )
+
+  it.effect("subscribes triggers and enqueues jobs only when memory.enabled is true", () =>
+    Effect.gen(function* () {
+      const env = gateEnv([
+        new Config.Document({
+          type: "document",
+          info: new Config.Info({ memory: new ConfigMemory.Info({ enabled: true }) }),
+        }),
+      ])
+      yield* env.layer
+      expect(env.listeners).toHaveLength(1)
+      yield* env.listeners[0]!(compactionEnded("ses_gate", 42))
+      expect(env.client.enqueued).toHaveLength(1)
+      expect(env.client.enqueued[0]?.key).toBe("mem:ses_gate:42")
     }),
   )
 })
