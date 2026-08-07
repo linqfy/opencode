@@ -57,6 +57,8 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { EventV2 } from "@opencode-ai/core/event"
 import { MemorySource } from "@opencode-ai/core/memory/source"
+import { CompactionCheckpointStore } from "@opencode-ai/core/session/compaction-checkpoint-store"
+import { CheckpointStore } from "@/session/compaction-checkpoint-store"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Npm } from "@opencode-ai/core/npm"
 import { PermissionSaved } from "@opencode-ai/core/permission/saved"
@@ -285,6 +287,7 @@ export function createRoutes(
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = buildLocationServiceMap([
     [MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode],
+    [CompactionCheckpointStore.node, CheckpointStore.sidecarCheckpointStoreNode],
     [ToolRegistryV2.toolsNode, McpV2Tools.node],
     ...replacements,
   ])

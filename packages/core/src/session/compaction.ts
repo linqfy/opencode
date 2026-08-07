@@ -11,6 +11,7 @@ import { Token } from "../util/token"
 import { Planner } from "@ultracode/context"
 import { toPlannerMessages, toPlannerText } from "./compaction-adapter"
 import { fallbackCheckpoint, parseCheckpoint } from "./compaction-summarize"
+import { CompactionCheckpointStore } from "./compaction-checkpoint-store"
 
 const DEFAULT_BUFFER = 20_000
 const DEFAULT_KEEP_TOKENS = 8_000
@@ -65,6 +66,7 @@ type Dependencies = {
     readonly stream: (request: LLMRequest) => Stream.Stream<LLMEvent, LLMError>
   }
   readonly config: readonly Config.Entry[]
+  readonly checkpointStore?: CompactionCheckpointStore.Interface
 }
 
 type Input = {
@@ -72,6 +74,7 @@ type Input = {
   readonly entries: readonly Entry[]
   readonly model: Model
   readonly request: LLMRequest
+  readonly contextEpoch: number
 }
 
 const estimate = (value: unknown) => Token.estimate(JSON.stringify(value))
@@ -275,14 +278,42 @@ export const make = (dependencies: Dependencies) => {
       timestamp: yield* DateTime.now,
       reason: "auto",
     })
-    yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
-      sessionID: input.sessionID,
-      messageID,
-      timestamp: yield* DateTime.now,
-      reason: "auto",
-      text: result.summaryMessage.summary,
-      recent: result.summaryMessage.recent,
-    })
+    const previous = input.entries.find((entry) => entry.message.type === "compaction")?.message
+    const parentCompactionSha =
+      previous?.type === "compaction" && typeof previous.metadata?.checkpointSha === "string"
+        ? previous.metadata.checkpointSha
+        : undefined
+    // Checkpoint persistence is best-effort: a missing or failing store must
+    // not fail compaction (CONTEXT.md managed-output rule). Loss is recorded
+    // explicitly on the Ended event instead.
+    const stored = dependencies.checkpointStore
+      ? yield* dependencies.checkpointStore
+          .put({
+            sessionID: input.sessionID,
+            checkpoint: result.checkpoint,
+            contextEpoch: input.contextEpoch,
+            parentCompactionSha,
+          })
+          .pipe(
+            Effect.match({
+              onFailure: () => undefined,
+              onSuccess: (value) => value,
+            }),
+          )
+      : undefined
+    const metadata = stored ? { checkpointSha: stored.sha } : { checkpointLost: true }
+    yield* dependencies.events.publish(
+      SessionEvent.Compaction.Ended,
+      {
+        sessionID: input.sessionID,
+        messageID,
+        timestamp: yield* DateTime.now,
+        reason: "auto",
+        text: result.summaryMessage.summary,
+        recent: result.summaryMessage.recent,
+      },
+      { metadata },
+    )
     return true
   })
   const compactIfNeeded = Effect.fn("SessionCompaction.compactIfNeeded")(function* (input: Input) {

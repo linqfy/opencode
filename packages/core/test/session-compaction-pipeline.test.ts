@@ -103,6 +103,7 @@ const pipelineInput = {
   entries: fixture,
   model,
   request: LLM.request({ model, messages: [Message.user("continue")], tools: [] }),
+  contextEpoch: 0,
 }
 
 const configDocument = (buffer?: number, tokens?: number) =>
@@ -193,6 +194,7 @@ describe("compactIfNeeded", () => {
         ],
         model: nearFullModel,
         request,
+        contextEpoch: 0,
       }
 
       const compacted = yield* compaction.compactIfNeeded(input)
@@ -237,6 +239,7 @@ describe("compactIfNeeded", () => {
         ],
         model: nearFullModel,
         request,
+        contextEpoch: 0,
       }
 
       const compacted = yield* compaction.compactIfNeeded(input)

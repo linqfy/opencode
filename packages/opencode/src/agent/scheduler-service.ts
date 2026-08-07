@@ -46,6 +46,7 @@ type SchedulerClient = Pick<
   | "getMemoryRecord"
   | "deleteMemoryRecord"
   | "patchMemoryRecord"
+  | "putArtifact"
 >
 
 export type MemoryJobClient = Pick<
@@ -92,6 +93,7 @@ export interface Interface {
   readonly adapter: Effect.Effect<TaskSchedulerAdapter, Error>
   readonly read: Effect.Effect<ReadApi, Error>
   readonly events: Effect.Effect<MemoryJobClient, Error>
+  readonly artifactWrite: Effect.Effect<Pick<EventsClient, "putArtifact">, Error>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SchedulerService") {}
@@ -207,6 +209,7 @@ export const layerWith = (input: {
         adapter: adapter.pipe(Effect.map((value) => value.adapter)),
         read: adapter.pipe(Effect.map((value) => createReadApi(value.client, value.adapter))),
         events: adapter.pipe(Effect.map((value) => value.client)),
+        artifactWrite: adapter.pipe(Effect.map((value) => value.client)),
       })
     }),
   )
@@ -325,6 +328,7 @@ function degradedLayer(message: string) {
         adapter: Effect.fail(new SchedulerUnavailableError(message)),
         read: Effect.fail(new SchedulerUnavailableError(message)),
         events: Effect.fail(new SchedulerUnavailableError(message)),
+        artifactWrite: Effect.fail(new SchedulerUnavailableError(message)),
       }),
     ),
   )

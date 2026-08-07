@@ -77,6 +77,7 @@ const schedulerLayer = Layer.succeed(
     adapter: Effect.fail(new SchedulerUnavailableError("memory test")),
     read: Effect.succeed(createReadApi(fakeClient, undefined)),
     events: Effect.fail(new SchedulerUnavailableError("memory test")),
+    artifactWrite: Effect.fail(new SchedulerUnavailableError("memory test")),
   }),
 )
 

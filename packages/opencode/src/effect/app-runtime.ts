@@ -62,6 +62,8 @@ import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { buildLocationServiceMap } from "@opencode-ai/core/location-services"
 import { MemorySource } from "@opencode-ai/core/memory/source"
 import { MemoryService } from "@/memory/service"
+import { CompactionCheckpointStore } from "@opencode-ai/core/session/compaction-checkpoint-store"
+import { CheckpointStore } from "@/session/compaction-checkpoint-store"
 import { ToolRegistry as ToolRegistryV2 } from "@opencode-ai/core/tool/registry"
 
 export const AppLayer = AppNodeBuilderV1.build(
@@ -121,6 +123,7 @@ export const AppLayer = AppNodeBuilderV1.build(
     AppNodeBuilderV1.build(SessionV2.node, [
       [LocationServiceMap.node, buildLocationServiceMap([
         [MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode],
+        [CompactionCheckpointStore.node, CheckpointStore.sidecarCheckpointStoreNode],
         [ToolRegistryV2.toolsNode, McpV2Tools.node],
       ])],
       [SessionExecution.node, SessionExecutionLocal.node],
