@@ -94,6 +94,18 @@ export type QuestionNotFoundError = {
 export const isQuestionNotFoundError = (value: unknown): value is QuestionNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "QuestionNotFoundError"
 
+export type MemoryDisabledError = { readonly _tag: "MemoryDisabledError"; readonly message: string }
+export const isMemoryDisabledError = (value: unknown): value is MemoryDisabledError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "MemoryDisabledError"
+
+export type MemoryNotFoundError = {
+  readonly _tag: "MemoryNotFoundError"
+  readonly threadID: string
+  readonly message: string
+}
+export const isMemoryNotFoundError = (value: unknown): value is MemoryNotFoundError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "MemoryNotFoundError"
+
 export type ProjectCopyError = {
   readonly name: "ProjectCopyError"
   readonly data: { readonly message: string; readonly forceRequired?: boolean | undefined }
@@ -2844,6 +2856,109 @@ export type ReferencesListOutput = {
         }
   }>
 }
+
+export type MemoriesListInput = {
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+    readonly limit?: number | undefined
+    readonly cursor?: string | undefined
+  }["location"]
+  readonly limit?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+    readonly limit?: number | undefined
+    readonly cursor?: string | undefined
+  }["limit"]
+  readonly cursor?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+    readonly limit?: number | undefined
+    readonly cursor?: string | undefined
+  }["cursor"]
+}
+
+export type MemoriesListOutput = {
+  readonly items: ReadonlyArray<{
+    readonly thread_id: string
+    readonly source_session: string
+    readonly source_turn: number
+    readonly source_end_seq: number
+    readonly transcript_artifact_id: string
+    readonly extractor_version: string
+    readonly source_updated_at: number
+    readonly raw_memory: string
+    readonly rollout_summary: string
+    readonly rollout_slug: string | null
+    readonly cwd: string
+    readonly git_branch: string | null
+    readonly generated_at: number
+    readonly usage_count: number
+    readonly last_usage: number | null
+    readonly deleted_at: number | null
+    readonly edited_by: string | null
+    readonly edited_at: number | null
+  }>
+  readonly next_cursor: string | null
+}
+
+export type MemoriesGetInput = {
+  readonly threadID: { readonly threadID: string }["threadID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type MemoriesGetOutput = {
+  readonly thread_id: string
+  readonly source_session: string
+  readonly source_turn: number
+  readonly source_end_seq: number
+  readonly transcript_artifact_id: string
+  readonly extractor_version: string
+  readonly source_updated_at: number
+  readonly raw_memory: string
+  readonly rollout_summary: string
+  readonly rollout_slug: string | null
+  readonly cwd: string
+  readonly git_branch: string | null
+  readonly generated_at: number
+  readonly usage_count: number
+  readonly last_usage: number | null
+  readonly deleted_at: number | null
+  readonly edited_by: string | null
+  readonly edited_at: number | null
+}
+
+export type MemoriesPatchInput = {
+  readonly threadID: { readonly threadID: string }["threadID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+  readonly raw_memory?: {
+    readonly raw_memory?: string | undefined
+    readonly rollout_summary?: string | undefined
+    readonly rollout_slug?: string | undefined
+  }["raw_memory"]
+  readonly rollout_summary?: {
+    readonly raw_memory?: string | undefined
+    readonly rollout_summary?: string | undefined
+    readonly rollout_slug?: string | undefined
+  }["rollout_summary"]
+  readonly rollout_slug?: {
+    readonly raw_memory?: string | undefined
+    readonly rollout_summary?: string | undefined
+    readonly rollout_slug?: string | undefined
+  }["rollout_slug"]
+}
+
+export type MemoriesPatchOutput = void
+
+export type MemoriesDeleteInput = {
+  readonly threadID: { readonly threadID: string }["threadID"]
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type MemoriesDeleteOutput = void
 
 export type ProjectCopiesCreateInput = {
   readonly projectID: { readonly projectID: string }["projectID"]

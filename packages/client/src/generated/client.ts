@@ -106,6 +106,14 @@ import type {
   QuestionsRejectOutput,
   ReferencesListInput,
   ReferencesListOutput,
+  MemoriesListInput,
+  MemoriesListOutput,
+  MemoriesGetInput,
+  MemoriesGetOutput,
+  MemoriesPatchInput,
+  MemoriesPatchOutput,
+  MemoriesDeleteInput,
+  MemoriesDeleteOutput,
   ProjectCopiesCreateInput,
   ProjectCopiesCreateOutput,
   ProjectCopiesRemoveInput,
@@ -943,6 +951,61 @@ export function make(options: ClientOptions) {
             successStatus: 200,
             declaredStatuses: [401, 400],
             empty: false,
+          },
+          requestOptions,
+        ),
+    },
+    memories: {
+      list: (input?: MemoriesListInput, requestOptions?: RequestOptions) =>
+        request<MemoriesListOutput>(
+          {
+            method: "GET",
+            path: `/api/memory`,
+            query: { location: input?.["location"], limit: input?.["limit"], cursor: input?.["cursor"] },
+            successStatus: 200,
+            declaredStatuses: [409, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      get: (input: MemoriesGetInput, requestOptions?: RequestOptions) =>
+        request<MemoriesGetOutput>(
+          {
+            method: "GET",
+            path: `/api/memory/${encodeURIComponent(input.threadID)}`,
+            query: { location: input["location"] },
+            successStatus: 200,
+            declaredStatuses: [404, 409, 401, 400],
+            empty: false,
+          },
+          requestOptions,
+        ),
+      patch: (input: MemoriesPatchInput, requestOptions?: RequestOptions) =>
+        request<MemoriesPatchOutput>(
+          {
+            method: "PATCH",
+            path: `/api/memory/${encodeURIComponent(input.threadID)}`,
+            query: { location: input["location"] },
+            body: {
+              raw_memory: input["raw_memory"],
+              rollout_summary: input["rollout_summary"],
+              rollout_slug: input["rollout_slug"],
+            },
+            successStatus: 204,
+            declaredStatuses: [404, 409, 401, 400],
+            empty: true,
+          },
+          requestOptions,
+        ),
+      delete: (input: MemoriesDeleteInput, requestOptions?: RequestOptions) =>
+        request<MemoriesDeleteOutput>(
+          {
+            method: "DELETE",
+            path: `/api/memory/${encodeURIComponent(input.threadID)}`,
+            query: { location: input["location"] },
+            successStatus: 204,
+            declaredStatuses: [404, 409, 401, 400],
+            empty: true,
           },
           requestOptions,
         ),
