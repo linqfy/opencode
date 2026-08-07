@@ -23,6 +23,7 @@ import { SystemContextRegistry } from "../../system-context/registry"
 import { SkillGuidance } from "../../skill/guidance"
 import { ReferenceGuidance } from "../../reference/guidance"
 import { ToolRegistry } from "../../tool/registry"
+import { buildToolQuery } from "../../tool/query"
 import { ToolOutputStore } from "../../tool-output-store"
 import { SessionContextEpoch } from "../context-epoch"
 import { SessionCompaction } from "../compaction"
@@ -89,6 +90,11 @@ import { llmClient } from "../../effect/app-node-platform"
  * provider turn. Registry definitions are advertised, local tool calls are settled durably, and an
  * explicit loop starts the next provider turn after local settlement. Configured agent step limits bound the loop.
  */
+
+type ToolMemo = {
+  activeFingerprint: string | undefined
+  materialization: ToolRegistry.Materialization | undefined
+}
 
 const layer = Layer.effect(
   Service,
@@ -170,6 +176,23 @@ const layer = Layer.effect(
         concurrency: "unbounded",
       }).pipe(Effect.map(SystemContext.combine))
 
+    // A new query fingerprint only takes effect at the next provider-turn boundary: the in-flight turn
+    // keeps the definitions it already materialized, and an identical fingerprint reuses them verbatim.
+    const materializeTools = Effect.fn("SessionRunner.materializeTools")(function* (
+      permissions: PermissionV2.Ruleset | undefined,
+      query: string | undefined,
+      isLastStep: boolean,
+      memo: ToolMemo,
+    ) {
+      if (isLastStep) return undefined
+      const fingerprint = query
+      if (memo.activeFingerprint === fingerprint && memo.materialization !== undefined) return memo.materialization
+      const materialization = yield* tools.materialize(permissions, query)
+      memo.activeFingerprint = fingerprint
+      memo.materialization = materialization
+      return materialization
+    })
+
     const runTurnAttempt = Effect.fn("SessionRunner.runTurn")(function* (
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
@@ -177,6 +200,7 @@ const layer = Layer.effect(
       limits:
         | { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number; inputFloor: number }
         | undefined,
+      memo: ToolMemo,
       recoverOverflow?: typeof compaction.compactAfterOverflow,
     ) {
       if (
@@ -208,7 +232,13 @@ const layer = Layer.effect(
       const entries = yield* SessionHistory.entriesForRunner(db, session.id, system.baselineSeq)
       const context = entries.map((entry) => entry.message)
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
-      const toolMaterialization = isLastStep ? undefined : yield* tools.materialize(agent.info?.permissions)
+      const lastUserText = context.filter((message) => message.type === "user").at(-1)?.text
+      const query = buildToolQuery({
+        agentDescription: agent.info?.description,
+        agentName: agent.id,
+        lastUserText,
+      })
+      const toolMaterialization = yield* materializeTools(agent.info?.permissions, query, isLastStep, memo)
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
       const request = LLM.request({
         model,
@@ -378,6 +408,7 @@ const layer = Layer.effect(
       limits:
         | { readonly maxTokens: number; readonly maxTurns: number; tokens: number; turns: number; inputFloor: number }
         | undefined,
+      memo: ToolMemo,
     ) => Effect.Effect<
       {
         readonly status: "completed" | "budget_exhausted"
@@ -389,29 +420,29 @@ const layer = Layer.effect(
       RunError
     >
 
-    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, limits) {
-      return yield* runTurnAttempt(sessionID, promotion, step, limits).pipe(
+    const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, limits, memo) {
+      return yield* runTurnAttempt(sessionID, promotion, step, limits, memo).pipe(
         Effect.catchDefect(
           Effect.fnUntraced(function* (defect) {
             if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
             if (defect.transition._tag === "ContinueAfterOverflowCompaction")
               return yield* Effect.die("Post-compaction provider attempt cannot recover another overflow")
             yield* Effect.yieldNow
-            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, limits)
+            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, limits, memo)
           }),
         ),
       )
     })
 
-    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, limits) {
-      return yield* runTurnAttempt(sessionID, promotion, step, limits, compaction.compactAfterOverflow).pipe(
+    const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step, limits, memo) {
+      return yield* runTurnAttempt(sessionID, promotion, step, limits, memo, compaction.compactAfterOverflow).pipe(
         Effect.catchDefect(
           Effect.fnUntraced(function* (defect) {
             if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
             yield* Effect.yieldNow
             if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, limits)
-            return yield* runTurn(sessionID, undefined, defect.transition.step, limits)
+              return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step, limits, memo)
+            return yield* runTurn(sessionID, undefined, defect.transition.step, limits, memo)
           }),
         ),
       )
@@ -433,11 +464,12 @@ const layer = Layer.effect(
       const changedPaths = new Set<string>()
       let promotion: SessionInput.Delivery | undefined = hasSteer ? "steer" : hasQueue ? "queue" : undefined
       let shouldRun = input.force || hasSteer || hasQueue
+      const memo: ToolMemo = { activeFingerprint: undefined, materialization: undefined }
       while (shouldRun) {
         let needsContinuation = true
         let step = 1
         while (needsContinuation) {
-          const result = yield* runTurn(input.sessionID, promotion, step, limits)
+          const result = yield* runTurn(input.sessionID, promotion, step, limits, memo)
           tokens += result.tokens
           turns += result.tokens === 0 && result.status === "budget_exhausted" ? 0 : 1
           result.changedPaths.forEach((path) => changedPaths.add(path))

@@ -685,6 +685,7 @@ describe("SessionRunnerLLM", () => {
         ],
         [],
       ]
+      requests.length = 0
 
       yield* session.resume(sessionID)
 
@@ -748,7 +749,7 @@ describe("SessionRunnerLLM", () => {
 
       expect(requests).toHaveLength(1)
       expect(requests[0]?.model).toBe(model)
-      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["echo", "defect"])
+      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["search_tools"])
       expect(requests[0]?.messages.map((message) => ({ role: message.role, content: message.content }))).toEqual([
         { role: "user", content: [{ type: "text", text: "First" }] },
         { role: "user", content: [{ type: "text", text: "Second" }] },
@@ -1467,7 +1468,7 @@ describe("SessionRunnerLLM", () => {
       yield* session.resume(sessionID)
 
       expect(requests).toHaveLength(1)
-      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["echo", "defect"])
+      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["search_tools"])
       expect(yield* session.context(sessionID)).toMatchObject([
         { type: "user", text: "Use tools" },
         {
@@ -2913,7 +2914,7 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       yield* setup
       const session = yield* SessionV2.Service
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Settle before failing" }), resume: false })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Echo settle before failing" }), resume: false })
       const failure = providerUnavailable()
       toolExecutionGate = yield* Deferred.make<void>()
       responseStream = Stream.concat(
@@ -2932,7 +2933,7 @@ describe("SessionRunnerLLM", () => {
       toolExecutionGate = undefined
 
       expect(yield* session.context(sessionID)).toMatchObject([
-        { type: "user", text: "Settle before failing" },
+        { type: "user", text: "Echo settle before failing" },
         {
           type: "assistant",
           content: [
@@ -2947,7 +2948,7 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       yield* setup
       const session = yield* SessionV2.Service
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Interrupt blocked tool" }), resume: false })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Echo interrupt blocked tool" }), resume: false })
       executions.length = 0
       toolExecutionGate = yield* Deferred.make<void>()
       responseStream = Stream.concat(
@@ -2966,7 +2967,7 @@ describe("SessionRunnerLLM", () => {
       expect(yield* Fiber.await(run)).toMatchObject({ _tag: "Failure" })
       yield* session.interrupt(sessionID)
       expect(yield* session.context(sessionID)).toMatchObject([
-        { type: "user", text: "Interrupt blocked tool" },
+        { type: "user", text: "Echo interrupt blocked tool" },
         {
           type: "assistant",
           content: [
@@ -2982,7 +2983,7 @@ describe("SessionRunnerLLM", () => {
       yield* replaySessionProjection(sessionID)
 
       expect(yield* session.context(sessionID)).toMatchObject([
-        { type: "user", text: "Interrupt blocked tool" },
+        { type: "user", text: "Echo interrupt blocked tool" },
         { type: "assistant", content: [{ type: "tool", id: "call-before-interrupt", state: { status: "error" } }] },
       ])
       requests.length = 0
@@ -3020,7 +3021,7 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       yield* setup
       const session = yield* SessionV2.Service
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Interrupt tool settlement" }), resume: false })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Echo interrupt tool settlement" }), resume: false })
       executions.length = 0
       toolExecutionGate = yield* Deferred.make<void>()
       response = [
@@ -3038,7 +3039,7 @@ describe("SessionRunnerLLM", () => {
 
       expect(yield* Fiber.await(run)).toMatchObject({ _tag: "Failure" })
       expect(yield* session.context(sessionID)).toMatchObject([
-        { type: "user", text: "Interrupt tool settlement" },
+        { type: "user", text: "Echo interrupt tool settlement" },
         {
           type: "assistant",
           content: [
@@ -3063,7 +3064,7 @@ describe("SessionRunnerLLM", () => {
         }),
       )
       const session = yield* SessionV2.Service
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Finish at the limit" }), resume: false })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Echo finish at the limit" }), resume: false })
 
       requests.length = 0
       executions.length = 0
@@ -3094,7 +3095,7 @@ describe("SessionRunnerLLM", () => {
       })
       expect(executions).toEqual(["done"])
       expect(yield* session.context(sessionID)).toMatchObject([
-        { type: "user", text: "Finish at the limit" },
+        { type: "user", text: "Echo finish at the limit" },
         { type: "assistant", content: [{ type: "tool", id: "call-terminal", state: { status: "completed" } }] },
         { type: "assistant", content: [{ type: "tool", id: "call-forbidden", state: { status: "error" } }] },
       ])
@@ -3111,7 +3112,7 @@ describe("SessionRunnerLLM", () => {
         }),
       )
       const session = yield* SessionV2.Service
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Start work" }), resume: false })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Echo start work" }), resume: false })
 
       requests.length = 0
       executions.length = 0
@@ -3139,7 +3140,7 @@ describe("SessionRunnerLLM", () => {
 
       const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
       yield* Deferred.await(streamStarted)
-      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Change direction" }) })
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Echo change direction" }) })
       yield* Deferred.succeed(streamGate, undefined)
       yield* Fiber.join(run)
       streamGate = undefined
@@ -3246,7 +3247,7 @@ describe("SessionRunnerLLM", () => {
       const session = yield* SessionV2.Service
       yield* session.prompt({
         sessionID,
-        prompt: Prompt.make({ text: "Do not continue failed provider" }),
+        prompt: Prompt.make({ text: "Echo do not continue failed provider" }),
         resume: false,
       })
 
