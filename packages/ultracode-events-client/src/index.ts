@@ -203,6 +203,12 @@ export class EventsClient {
   async proposeCommit(key: string, kind: unknown): Promise<ProposeResult> {
     return this.call("propose_commit", { key, kind })
   }
+  async enqueueMemoryJob(key: string, kind: unknown): Promise<ProposeResult> {
+    return this.proposeCommit(key, kind)
+  }
+  async completeMemoryJob(key: string, kind: unknown): Promise<ProposeResult> {
+    return this.proposeCommit(key, kind)
+  }
   async listEvents(session: string, sinceSeq = 0, limit = 100): Promise<IndexedEvent[]> {
     return this.replay(session, sinceSeq, limit)
   }
