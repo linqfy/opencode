@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { toPlannerMessages } from "../src/session/compaction-adapter"
+import { DateTime } from "effect"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { FileAttachment } from "@opencode-ai/core/session/prompt"
+import { SessionSchema } from "@opencode-ai/core/session/schema"
+import { toPlannerMessages, toPlannerText } from "../src/session/compaction-adapter"
 
 // Minimal SessionMessage-shaped fixtures (only the fields the adapter reads).
 const user = (id: string, text: string) => ({ id, type: "user", text, time: { created: 0 } })
@@ -47,5 +51,39 @@ describe("toPlannerMessages", () => {
     expect(result.length).toBe(1)
     expect(result[0]?.tokens).toBeGreaterThan(0)
     expect(result[0]?.parts[0]?.tokens).toBe(10) // 40 chars / 4
+  })
+
+  test("keeps user file annotations and synthetic/shell labels in the render", () => {
+    const created = DateTime.makeUnsafe(0)
+    const userWithFile = SessionMessage.User.make({
+      id: SessionMessage.ID.make("msg_u"),
+      type: "user",
+      text: "Inspect this",
+      files: [FileAttachment.make({ uri: "file:///tmp/a.png", mime: "image/png", name: "a.png" })],
+      time: { created },
+    })
+    const synthetic = SessionMessage.Synthetic.make({
+      id: SessionMessage.ID.make("msg_s"),
+      type: "synthetic",
+      sessionID: SessionSchema.ID.make("ses_x"),
+      text: "injected context",
+      time: { created },
+    })
+    const shell = SessionMessage.Shell.make({
+      id: SessionMessage.ID.make("msg_sh"),
+      type: "shell",
+      callID: "call_1",
+      command: "ls -la",
+      output: "src/\npackage.json",
+      time: { created },
+    })
+
+    const lines = toPlannerText(toPlannerMessages([entry(userWithFile, 1), entry(synthetic, 2), entry(shell, 3)]))
+
+    expect(lines).toEqual([
+      "[User]: Inspect this\n[Attached image/png: a.png]",
+      "[Synthetic context]: injected context",
+      "[Shell]: ls -la\nsrc/\npackage.json",
+    ])
   })
 })

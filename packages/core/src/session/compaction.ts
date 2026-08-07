@@ -197,7 +197,10 @@ const summarize = (input: {
         if (LLMEvent.is.textDelta(event)) chunks.push(event.text)
         return Effect.void
       }),
-      Effect.catchTag("LLM.Error", () => Effect.void),
+      Effect.catchTag("LLM.Error", () => {
+        failed = true
+        return Effect.void
+      }),
     )
   await Effect.runPromiseWith(input.context)(effect).catch(() => {
     failed = true

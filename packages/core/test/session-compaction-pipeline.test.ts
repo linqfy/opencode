@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { DateTime, Effect, Stream } from "effect"
 import type { LLMRequest } from "@opencode-ai/llm"
-import { LLM, LLMEvent, Message, Model } from "@opencode-ai/llm"
+import { InvalidRequestReason, LLM, LLMError, LLMEvent, Message, Model } from "@opencode-ai/llm"
 import { OpenAIChat } from "@opencode-ai/llm/protocols/openai-chat"
 import { Config } from "@opencode-ai/core/config"
 import { ConfigCompaction } from "@opencode-ai/core/config/compaction"
@@ -198,6 +198,50 @@ describe("compactIfNeeded", () => {
       const compacted = yield* compaction.compactIfNeeded(input)
 
       expect(compacted).toBe(true)
+      expect(calls).toBe(1)
+    }),
+  )
+
+  live.effect("does not compact when the summarizer stream errors after partial output", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      let calls = 0
+      const llm = {
+        stream: (request: LLMRequest) => {
+          calls++
+          return Stream.concat(
+            Stream.succeed(LLMEvent.textDelta({ id: "c1", text: "partial summary" })),
+            Stream.fail(
+              new LLMError({ module: "test", method: "stream", reason: new InvalidRequestReason({ message: "boom" }) }),
+            ),
+          )
+        },
+      }
+      const compaction = SessionCompaction.make({
+        events,
+        llm,
+        config: [configDocument(0, 10)],
+      })
+      const nearFullModel = Model.make({
+        id: "test-model",
+        provider: "openai",
+        route: OpenAIChat.route.with({ limits: { context: 1_000, output: 100 } }),
+      })
+      const request = LLM.request({ model: nearFullModel, messages: [Message.user("t".repeat(5_000))], tools: [] })
+      const input = {
+        sessionID: SessionSchema.ID.make("ses_overflow_error_test"),
+        entries: [
+          entry(1, user("u1", "Hello")),
+          entry(2, assistant("a1", [textPart("t1", "Hi there")])),
+          entry(3, user("u2", "Build it")),
+        ],
+        model: nearFullModel,
+        request,
+      }
+
+      const compacted = yield* compaction.compactIfNeeded(input)
+
+      expect(compacted).toBe(false)
       expect(calls).toBe(1)
     }),
   )

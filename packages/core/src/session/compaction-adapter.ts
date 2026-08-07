@@ -36,10 +36,13 @@ const textPart = (id: string, text: string, over: Partial<Planner.PlannerPart> =
 })
 
 const partsFor = (message: SessionMessage.Message): Planner.PlannerPart[] => {
-  if (message.type === "user") return [textPart(message.id, message.text, { userAuthored: true })]
-  if (message.type === "synthetic") return [textPart(message.id, message.text)]
+  if (message.type === "user") {
+    const files = message.files?.map((file) => `[Attached ${file.mime}: ${file.name ?? file.uri}]`) ?? []
+    return [textPart(message.id, [message.text, ...files].filter(Boolean).join("\n"), { userAuthored: true })]
+  }
+  if (message.type === "synthetic") return [textPart(message.id, `[Synthetic context]: ${message.text}`)]
   if (message.type === "system") return [textPart(message.id, message.text)]
-  if (message.type === "shell") return [textPart(message.id, `Shell command: ${message.command}\n${message.output}`)]
+  if (message.type === "shell") return [textPart(message.id, `[Shell]: ${message.command}\n${truncate(message.output)}`)]
   if (message.type === "compaction") return [textPart(message.id, `${message.summary}\n${message.recent}`)]
   if (message.type !== "assistant") return []
   return message.content.flatMap((part): Planner.PlannerPart[] => {
@@ -89,7 +92,7 @@ export const toPlannerText = (messages: readonly Planner.PlannerMessage[], skip?
     if (skip?.has(message.id)) continue
     if (message.role === "user") {
       const text = message.parts.filter((part) => part.kind === "text").map((part) => part.text).join("\n")
-      if (text) lines.push(`[User]: ${text}`)
+      if (text) lines.push(message.parts.some((part) => part.userAuthored) ? `[User]: ${text}` : text)
     }
     if (message.role === "system") lines.push(`[System update]: ${message.parts.map((part) => part.text).join("\n")}`)
     if (message.role === "assistant") {
