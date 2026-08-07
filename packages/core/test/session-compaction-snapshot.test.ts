@@ -162,6 +162,30 @@ describe("pre-compaction context snapshots", () => {
     }),
   )
 
+  live.effect("marks snapshotLost when snapshot is enabled but no store is wired", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const started: SessionEvent.Compaction.Started[] = []
+      yield* events.project(SessionEvent.Compaction.Started, (event) =>
+        Effect.sync(() => {
+          started.push(event)
+        }),
+      )
+      const compaction = SessionCompaction.make({
+        events,
+        llm: { stream: scriptedStream(CHECKPOINT_JSON) },
+        config: [configDocument(true)],
+      })
+
+      const compacted = yield* compaction.compactAfterOverflow(overflowInput)
+
+      expect(compacted).toBe(true)
+      expect(started).toHaveLength(1)
+      expect(started[0].metadata?.snapshotLost).toBe(true)
+      expect(started[0].metadata?.preCompactionSnapshotSha).toBeUndefined()
+    }),
+  )
+
   live.effect("does not snapshot when compaction.snapshot is unset", () =>
     Effect.gen(function* () {
       const events = yield* EventV2.Service

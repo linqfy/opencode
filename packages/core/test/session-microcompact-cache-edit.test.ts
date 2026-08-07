@@ -5,11 +5,16 @@ import { LLM, LLMEvent, Message, Model } from "@opencode-ai/llm"
 import { OpenAIChat } from "@opencode-ai/llm/protocols/openai-chat"
 import { Config } from "@opencode-ai/core/config"
 import { ConfigCompaction } from "@opencode-ai/core/config/compaction"
+import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Database } from "@opencode-ai/core/database/database"
+import { EventV2 } from "@opencode-ai/core/event"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionCompaction } from "@opencode-ai/core/session/compaction"
 import { SessionSchema } from "@opencode-ai/core/session/schema"
+import { testEffect } from "./lib/effect"
 
 const created = DateTime.makeUnsafe(0)
 const messageID = (value: string) => SessionMessage.ID.make(`msg_${value}`)
@@ -61,7 +66,6 @@ const SUMMARY = "## Objective\nVerified the pipeline works end to end."
 const pipelineInput = {
   sessionID: SessionSchema.ID.make("ses_cache_edit_test"),
   entries: fixture,
-  request: null as unknown as LLMRequest,
   contextEpoch: 0,
 }
 
@@ -74,6 +78,10 @@ const configDocument = () =>
   })
 
 const scriptedStream = (request: LLMRequest) => Stream.succeed(LLMEvent.textDelta({ id: "c1", text: SUMMARY }))
+
+const live = testEffect(
+  AppNodeBuilder.build(LayerNode.group([Database.node, EventV2.node])),
+)
 
 const runPipeline = (cacheEdit: boolean) => {
   const model = Model.make({
@@ -124,4 +132,51 @@ describe("cache-edit-aware microcompaction", () => {
     expect(on?.summaryMessage.recent).toEqual(off?.summaryMessage.recent)
     expect(on?.checkpoint).toEqual(off?.checkpoint)
   })
+})
+
+describe("cache-edit ops reach the runner", () => {
+  live.effect("threads { kind: 'cache-edit', partIds } on the overflow return for a cacheEdit model", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const compaction = SessionCompaction.make({
+        events,
+        llm: { stream: scriptedStream },
+        config: [configDocument()],
+      })
+      const model = Model.make({
+        id: "test-model",
+        provider: "openai",
+        route: OpenAIChat.route.with({ limits: { context: 200_000, output: 4_096 } }),
+        compatibility: { cacheEdit: true },
+      })
+      const compacted = yield* compaction.compactAfterOverflow({
+        ...pipelineInput,
+        model,
+        request: LLM.request({ model, messages: [Message.user("continue")], tools: [] }),
+      })
+      expect(compacted).toEqual({ cacheEdit: { kind: "cache-edit", partIds: ["p_r1", "p_r2", "p_r3"] } })
+    }),
+  )
+
+  live.effect("still returns true on the overflow return when the model does not advertise cacheEdit", () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2.Service
+      const compaction = SessionCompaction.make({
+        events,
+        llm: { stream: scriptedStream },
+        config: [configDocument()],
+      })
+      const model = Model.make({
+        id: "test-model",
+        provider: "openai",
+        route: OpenAIChat.route.with({ limits: { context: 200_000, output: 4_096 } }),
+      })
+      const compacted = yield* compaction.compactAfterOverflow({
+        ...pipelineInput,
+        model,
+        request: LLM.request({ model, messages: [Message.user("continue")], tools: [] }),
+      })
+      expect(compacted).toBe(true)
+    }),
+  )
 })

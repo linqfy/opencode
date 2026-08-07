@@ -10,7 +10,7 @@ import { SessionSchema } from "./schema"
 import { Token } from "../util/token"
 import { Planner } from "@ultracode/context"
 import { toPlannerMessages, toPlannerText } from "./compaction-adapter"
-import { fallbackCheckpoint, parseCheckpoint } from "./compaction-summarize"
+import { checkpointPrompt, fallbackCheckpoint, parseCheckpoint } from "./compaction-summarize"
 import { CompactionCheckpointStore } from "./compaction-checkpoint-store"
 
 const DEFAULT_BUFFER = 20_000
@@ -105,14 +105,15 @@ const settings = (documents: readonly Config.Entry[]) => {
   )
 }
 
+// The admission line shared by the markdown buildPrompt and the typed-checkpoint
+// seam so both prompt formats carry the "anchored summary" context.
+const anchoredInstruction = (previousSummary?: string) =>
+  previousSummary
+    ? `Update the anchored summary below using the conversation history above.\nPreserve still-true details, remove stale details, and merge in the new facts.\n<previous-summary>\n${previousSummary}\n</previous-summary>`
+    : "Create a new anchored summary from the conversation history."
+
 export const buildPrompt = (input: { readonly previousSummary?: string; readonly context: readonly string[] }) =>
-  [
-    input.previousSummary
-      ? `Update the anchored summary below using the conversation history above.\nPreserve still-true details, remove stale details, and merge in the new facts.\n<previous-summary>\n${input.previousSummary}\n</previous-summary>`
-      : "Create a new anchored summary from the conversation history.",
-    SUMMARY_TEMPLATE,
-    ...input.context,
-  ].join("\n\n")
+  [anchoredInstruction(input.previousSummary), SUMMARY_TEMPLATE, ...input.context].join("\n\n")
 
 // The anchored-summary selection: splits the rendered conversation at the keep
 // budget so the oldest content becomes `head` (fed to the summarizer) and the
@@ -164,9 +165,12 @@ type PipelineDependencies = {
 }
 
 // The injected summarize seam: runs the LLM stream over the post-stage
-// conversation (selected head + previous compaction summary/recent), parses the
-// output into the typed checkpoint, and pins the recent tail's start message id
-// so the checkpoint's `recentTailStartId` always references an existing message.
+// conversation (selected head + previous compaction summary/recent) asking for
+// the typed JSON checkpoint so the structured audit fields are populated in
+// production, parses the output, and pins the recent tail's start message id so
+// the checkpoint's `recentTailStartId` always references an existing message.
+// The checkpoint's objective is the model-facing summary (the raw model text
+// when the output cannot be parsed); compaction never fails on a parse error.
 const summarize = (input: {
   readonly dependencies: PipelineDependencies
   readonly config: Settings
@@ -180,10 +184,10 @@ const summarize = (input: {
   const tailStart = Planner.recentTailStart(messages, Planner.DEFAULT_COMPACTION_CONFIG.keepRecentTurns)
   const recentTailStartId = messages[tailStart]?.id
   const selected = selectLines(toPlannerText(messages, input.skip), input.config.tokens)
-  const summaryPrompt = buildPrompt({
-    previousSummary: input.previousSummary,
-    context: [input.previousRecent ?? "", selected?.head ?? ""].filter(Boolean),
-  })
+  const summaryPrompt = [
+    anchoredInstruction(input.previousSummary),
+    checkpointPrompt([input.previousRecent ?? "", selected?.head ?? ""].filter(Boolean)),
+  ].join("\n\n")
   const summaryOutput = Math.min(input.output || SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS)
   const chunks: string[] = []
   let failed = false
@@ -212,7 +216,7 @@ const summarize = (input: {
   })
   const text = failed ? "" : chunks.join("")
   const checkpoint = parseCheckpoint(text) ?? fallbackCheckpoint(text)
-  return { ...checkpoint, objective: text, recentTailStartId }
+  return { ...checkpoint, recentTailStartId }
 }
 
 // The controller's single compaction entry: runs the staged planner over the
@@ -356,7 +360,10 @@ export const make = (dependencies: Dependencies) => {
       },
       { metadata },
     )
-    return true
+    // Ride the cache-edit ops on the existing boolean contract so a future
+    // consumer (RUN-05) can reach them without mutating history text; the
+    // runner's truthiness check keeps working because the object is truthy.
+    return result.cacheEdit === undefined ? true : { cacheEdit: result.cacheEdit }
   })
   const compactIfNeeded = Effect.fn("SessionCompaction.compactIfNeeded")(function* (input: Input) {
     if (!config.auto) return false

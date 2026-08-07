@@ -157,6 +157,30 @@ describe("CompactionPipeline", () => {
     expect(result.checkpoint.recentTailStartId).toBe("msg_u11")
     expect(fixture.some((item) => item.message.id === result.checkpoint.recentTailStartId)).toBe(true)
   })
+
+  test("the summarize seam requests a typed JSON checkpoint so production structured fields are populated", async () => {
+    const requests: LLMRequest[] = []
+    const llm = {
+      stream: (request: LLMRequest) => {
+        requests.push(request)
+        return Stream.succeed(LLMEvent.textDelta({ id: "c1", text: SUMMARY }))
+      },
+    }
+    const result = await Effect.runPromise(
+      SessionCompaction.CompactionPipeline.run(
+        { llm, config: [configDocument(undefined, 20_000)] },
+        pipelineInput,
+      ),
+    )
+
+    expect(result).toBeDefined()
+    expect(requests).toHaveLength(1)
+    const prompt = requests[0]?.messages.flatMap((message) =>
+      message.role === "user" ? message.content.flatMap((content) => (content.type === "text" ? [content.text] : [])) : [],
+    ).join("\n")
+    expect(prompt).toContain("JSON checkpoint")
+    expect(prompt).toContain("objective (string)")
+  })
 })
 
 const live = testEffect(

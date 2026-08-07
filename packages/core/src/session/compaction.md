@@ -18,8 +18,13 @@ stages in order:
    `keepRecentToolResults` + the recent tail + tagged parts), marking them with the
    `[Old tool result content cleared]` placeholder.
 4. retoken — recomputes per-message token totals after clearing/preview.
-5. summarize — the injected seam streams the anchored summary (built from the post-stage
-   conversation via `selectLines`) through the model and parses the typed checkpoint.
+5. summarize — the injected seam streams an anchored prompt (the previous
+   summary admission line plus `checkpointPrompt`, which asks the model for the
+   typed JSON checkpoint from `compaction-summarize.ts`) and parses the output.
+   The parsed structured fields feed the audit checkpoint; the checkpoint's
+   objective is the model-facing summary carried by the Compaction message, and
+   unparseable output falls back to `fallbackCheckpoint` (compaction never
+   fails).
 
 Overflow semantics are unchanged: preflight estimate → compact-if-needed; provider
 overflow → exactly one overflow-triggered compaction; a second overflow is terminal.
@@ -54,4 +59,7 @@ When the resolved model advertises `ModelCompatibility.cacheEdit`, the pipeline 
 carries `{ kind: "cache-edit", partIds }` alongside the cleared state so the next request
 can represent deletion provider-natively instead of mutating history text (which busts the
 Anthropic prefix cache). The durable history records the same cleared state either way —
-only the wire representation differs.
+only the wire representation differs. `compactAfterOverflow` threads the ops onto its
+return (`true` when there is nothing to emit, `{ cacheEdit }` when there is) so the runner
+can reach them at the overflow boundary; the runner's existing truthiness check is
+unaffected because the object is truthy.
