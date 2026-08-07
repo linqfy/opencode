@@ -13,21 +13,23 @@ const sidecarLayer = Layer.effect(
   Effect.gen(function* () {
     const scheduler = yield* SchedulerService.Service
     const location = yield* Location.Service
+    // Resolve the write API lazily so an unavailable scheduler degrades to
+    // checkpointLost / snapshotLost per put instead of failing the whole
+    // location graph.
+    const writeArtifact = (bytes: Uint8Array) =>
+      scheduler.artifactWrite.pipe(
+        Effect.flatMap((write) =>
+          Effect.tryPromise({
+            try: () => write.putArtifact(bytes, "application/json", location.directory, "session"),
+            catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          }),
+        ),
+        Effect.map((ref) => ({ sha: ref.hash })),
+      )
     return CompactionCheckpointStore.Service.of({
-      put: (input) => {
-        const bytes = new TextEncoder().encode(CompactionCheckpointStore.canonicalJson(input))
-        // Resolve the write API lazily so an unavailable scheduler degrades to
-        // checkpointLost per put instead of failing the whole location graph.
-        return scheduler.artifactWrite.pipe(
-          Effect.flatMap((write) =>
-            Effect.tryPromise({
-              try: () => write.putArtifact(bytes, "application/json", location.directory, "session"),
-              catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-            }),
-          ),
-          Effect.map((ref) => ({ sha: ref.hash })),
-        )
-      },
+      put: (input) => writeArtifact(new TextEncoder().encode(CompactionCheckpointStore.canonicalJson(input))),
+      putSnapshot: (request) =>
+        writeArtifact(new TextEncoder().encode(CompactionCheckpointStore.snapshotCanonicalJson(request))),
     })
   }),
 )

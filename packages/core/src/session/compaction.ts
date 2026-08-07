@@ -58,6 +58,7 @@ type Settings = {
   readonly auto: boolean
   readonly buffer: number
   readonly tokens: number
+  readonly snapshot: boolean
 }
 
 type Dependencies = {
@@ -98,8 +99,9 @@ const settings = (documents: readonly Config.Entry[]) => {
       auto: current.auto ?? result.auto,
       buffer: current.buffer ?? result.buffer,
       tokens: current.keep?.tokens ?? result.tokens,
+      snapshot: current.snapshot ?? result.snapshot,
     }),
-    { auto: true, buffer: DEFAULT_BUFFER, tokens: DEFAULT_KEEP_TOKENS },
+    { auto: true, buffer: DEFAULT_BUFFER, tokens: DEFAULT_KEEP_TOKENS, snapshot: false },
   )
 }
 
@@ -264,20 +266,51 @@ export const CompactionPipeline = {
   }),
 }
 
+type SnapshotMetadata =
+  | { readonly preCompactionSnapshotSha: string }
+  | { readonly snapshotLost: true }
+
+// Best-effort persistence of the full pre-compaction provider-request context.
+// Returns Started-event metadata: the artifact sha when the snapshot is stored,
+// `snapshotLost` when storage is unavailable or fails, and undefined when the
+// feature is disabled. Never fails the compaction flow.
+const captureSnapshot = (
+  dependencies: Dependencies,
+  request: LLMRequest,
+  enabled: boolean,
+): Effect.Effect<SnapshotMetadata | undefined> => {
+  if (!enabled) return Effect.succeed(undefined)
+  if (!dependencies.checkpointStore) return Effect.succeed({ snapshotLost: true })
+  return dependencies.checkpointStore.putSnapshot(request).pipe(
+    Effect.match({
+      onFailure: () => ({ snapshotLost: true }),
+      onSuccess: (value) => ({ preCompactionSnapshotSha: value.sha }),
+    }),
+  )
+}
+
 export const make = (dependencies: Dependencies) => {
   const config = settings(dependencies.config)
   const compactAfterOverflow = Effect.fn("SessionCompaction.compactAfterOverflow")(function* (input: Input) {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
+    // The pre-compaction snapshot is captured before any stage mutation runs,
+    // and a failing or absent store must not fail compaction (CONTEXT.md
+    // managed-output rule); loss is recorded on the Started event instead.
+    const snapshotMetadata = yield* captureSnapshot(dependencies, input.request, config.snapshot)
     const result = yield* CompactionPipeline.run(dependencies, input)
     if (result === undefined || !result.summaryMessage.summary.trim()) return false
     const messageID = result.summaryMessage.id
-    yield* dependencies.events.publish(SessionEvent.Compaction.Started, {
-      sessionID: input.sessionID,
-      messageID,
-      timestamp: yield* DateTime.now,
-      reason: "auto",
-    })
+    yield* dependencies.events.publish(
+      SessionEvent.Compaction.Started,
+      {
+        sessionID: input.sessionID,
+        messageID,
+        timestamp: yield* DateTime.now,
+        reason: "auto",
+      },
+      snapshotMetadata === undefined ? undefined : { metadata: snapshotMetadata },
+    )
     const previous = input.entries.find((entry) => entry.message.type === "compaction")?.message
     const parentCompactionSha =
       previous?.type === "compaction" && typeof previous.metadata?.checkpointSha === "string"
