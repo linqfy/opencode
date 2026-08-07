@@ -35,6 +35,7 @@ import { SystemContextBuiltIns } from "./system-context/builtins"
 import { SystemContextRegistry } from "./system-context/registry"
 import { BuiltInTools } from "./tool/builtins"
 import { ReadToolFileSystem } from "./tool/read-filesystem"
+import { ToolDomain } from "./tool/domain"
 import { ToolRegistry } from "./tool/registry"
 import { ToolOutputStore } from "./tool-output-store"
 
@@ -68,6 +69,7 @@ export const locationServices = LayerNode.group([
   ToolOutputStore.node,
   ToolRegistry.node,
   ToolRegistry.toolsNode,
+  ToolDomain.node,
   Image.node,
   SkillGuidance.node,
   ReferenceGuidance.node,

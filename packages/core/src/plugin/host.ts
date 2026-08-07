@@ -15,6 +15,8 @@ import { ProviderV2 } from "../provider"
 import { Reference } from "../reference"
 import type { DeepMutable } from "../schema"
 import { SkillV2 } from "../skill"
+import { Tool } from "../tool/tool"
+import { ToolDomain } from "../tool/domain"
 
 const mutable = <T>(value: T) => value as DeepMutable<T>
 
@@ -27,6 +29,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
   const hooks = yield* Hooks.Service
   const reference = yield* Reference.Service
   const skill = yield* SkillV2.Service
+  const tool = yield* ToolDomain.Service
 
   return {
     options: {},
@@ -215,6 +218,32 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
           callback({
             source: (source) => draft.source(Schema.decodeUnknownSync(SkillV2.Source)(source)),
             list: draft.list,
+          }),
+        ),
+    },
+    tool: {
+      reload: tool.reload,
+      transform: (callback) =>
+        tool.transform((draft) =>
+          callback({
+            register: (name, definition) =>
+              draft.register(
+                name,
+                Tool.make({
+                  namespace: definition.namespace,
+                  description: definition.description,
+                  input: definition.input,
+                  output: definition.output,
+                  execute: (input, context) =>
+                    definition.execute(input, {
+                      sessionID: context.sessionID,
+                      agent: context.agent,
+                      assistantMessageID: context.assistantMessageID,
+                      toolCallID: context.toolCallID,
+                    }),
+                }),
+              ),
+            remove: (name) => draft.remove(name),
           }),
         ),
     },

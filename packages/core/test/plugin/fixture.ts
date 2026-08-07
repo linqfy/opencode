@@ -9,12 +9,17 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { Global } from "@opencode-ai/core/global"
 import { Integration } from "@opencode-ai/core/integration"
 import { Location } from "@opencode-ai/core/location"
 import { Npm } from "@opencode-ai/core/npm"
 import { Bundle, Hooks, PluginV2 } from "@opencode-ai/core/plugin"
 import { Reference } from "@opencode-ai/core/reference"
 import { SkillV2 } from "@opencode-ai/core/skill"
+import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
+import { ToolDomain } from "@opencode-ai/core/tool/domain"
+import { ToolRegistry } from "@opencode-ai/core/tool/registry"
+import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { Effect, Layer } from "effect"
 import { tempLocationLayer } from "../fixture/location"
 
@@ -46,9 +51,15 @@ export const PluginTestLayer = AppNodeBuilder.build(
     Integration.node,
     Reference.node,
     SkillV2.node,
+    Global.node,
+    ApplicationTools.node,
+    ToolRegistry.node,
+    ToolRegistry.toolsNode,
+    ToolDomain.node,
   ]),
   [
     [Location.node, tempLocationLayer],
     [Npm.node, npmLayer],
+    [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
   ],
 )

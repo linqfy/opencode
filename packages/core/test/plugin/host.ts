@@ -55,6 +55,10 @@ export function host(overrides: Overrides = {}): PluginContext {
       transform: () => Effect.die("unused skill.transform"),
       reload: () => Effect.die("unused skill.reload"),
     },
+    tool: overrides.tool ?? {
+      transform: () => Effect.die("unused tool.transform"),
+      reload: () => Effect.die("unused tool.reload"),
+    },
   }
 }
 
