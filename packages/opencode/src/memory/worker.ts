@@ -6,14 +6,25 @@ import { redactSecrets } from "@ultracode/memory"
 import type { MemoryJob } from "@ultracode/events-client"
 import type { MemoryJobClient } from "@/agent/scheduler-service"
 
-export type MemoryClaimGuard = (key: string) => boolean
+export interface MemoryClaimGuard {
+  readonly claimed: (key: string) => boolean
+  readonly mark: (key: string) => void
+}
+
+// Bounded so a long-lived process never leaks memory for one-time keys; the
+// oldest keys are evicted once the guard exceeds this bound.
+const CLAIM_GUARD_MAX = 10_000
 
 export const memoryClaimGuard = (): MemoryClaimGuard => {
   const claimed = new Set<string>()
-  return (key) => {
-    if (claimed.has(key)) return true
-    claimed.add(key)
-    return false
+  return {
+    claimed: (key) => claimed.has(key),
+    mark: (key) => {
+      claimed.add(key)
+      if (claimed.size > CLAIM_GUARD_MAX) {
+        for (const stale of Array.from(claimed).slice(0, claimed.size - CLAIM_GUARD_MAX)) claimed.delete(stale)
+      }
+    },
   }
 }
 
@@ -102,8 +113,9 @@ const pollOnce = (deps: MemoryWorkerDependencies): Effect.Effect<void, Error> =>
       catch: (error) => (error instanceof Error ? error : new Error(String(error))),
     })
     if (!job) return
-    if (deps.claim(job.request_id)) return
+    if (deps.claim.claimed(job.request_id)) return
     yield* processClaimedJob(deps, job)
+    deps.claim.mark(job.request_id)
   })
 
 export const runMemoryWorker = (deps: MemoryWorkerDependencies): Effect.Effect<void> =>

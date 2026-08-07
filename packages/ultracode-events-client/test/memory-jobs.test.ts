@@ -84,4 +84,34 @@ describe("memory job client methods", () => {
     )
     dispose()
   })
+
+  test("getMemoryRecord requests the record by thread id", async () => {
+    const { client, recordPath, dispose } = startFakeSidecar()
+    await client.getMemoryRecord("thread-1")
+    const line = (await records(recordPath)).find((entry) => entry.startsWith("get_memory_record\t"))
+    expect(line).toBeDefined()
+    const params = JSON.parse(line!.split("\t")[2]!)
+    expect(params).toEqual({ thread_id: "thread-1" })
+    dispose()
+  })
+
+  test("deleteMemoryRecord requests deletion by thread id", async () => {
+    const { client, recordPath, dispose } = startFakeSidecar()
+    await client.deleteMemoryRecord("thread-1")
+    const line = (await records(recordPath)).find((entry) => entry.startsWith("delete_memory_record\t"))
+    expect(line).toBeDefined()
+    const params = JSON.parse(line!.split("\t")[2]!)
+    expect(params).toEqual({ thread_id: "thread-1" })
+    dispose()
+  })
+
+  test("patchMemoryRecord serializes the camelCase patch to snake_case", async () => {
+    const { client, recordPath, dispose } = startFakeSidecar()
+    await client.patchMemoryRecord("thread-1", { rawMemory: "edited", rolloutSummary: "summary" })
+    const line = (await records(recordPath)).find((entry) => entry.startsWith("patch_memory_record\t"))
+    expect(line).toBeDefined()
+    const params = JSON.parse(line!.split("\t")[2]!)
+    expect(params).toEqual({ thread_id: "thread-1", raw_memory: "edited", rollout_summary: "summary" })
+    dispose()
+  })
 })

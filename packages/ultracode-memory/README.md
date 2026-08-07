@@ -6,7 +6,7 @@ Since RUN-02 the package is wired into the live session: the `core/memory` Syste
 
 ## Injection caps
 
-Every turn, at most `MAX_MEMORY_RECORDS = 5` records are injected, each capped at `MAX_MEMORY_BYTES_PER_RECORD = 4096` bytes, for a session-epoch budget of `MAX_MEMORY_TOTAL_BYTES = 61440` bytes (60 KB). Selection is deterministic: sort by freshness (most-recent first), then by key ascending. Records that overflow the caps are reported as `+N more memories` in the rendered digest. Enforced in `packages/core/src/memory/select.ts`; also enforced by the render layer via `MAX_MEMORY_LINES` / `MAX_MEMORY_BYTES`.
+Every turn, at most `MAX_MEMORY_RECORDS = 5` records are injected, each capped at `MAX_MEMORY_BYTES_PER_RECORD = 4096` bytes, for a session-epoch budget of `MAX_MEMORY_TOTAL_BYTES = 61440` bytes (60 KB). Selection is deterministic: sort by freshness (most-recent first), then by key ascending. Records that overflow the caps are reported as `+N more memories` in the rendered digest. The per-record and per-epoch caps are enforced in `packages/core/src/memory/select.ts`; the rendered `## Memory` block itself is capped at 4 KB by the source's renderer (`packages/core/src/memory/source.ts`).
 
 ## Privacy defaults
 
@@ -16,7 +16,7 @@ Every turn, at most `MAX_MEMORY_RECORDS = 5` records are injected, each capped a
 
 ## Durable store
 
-Memory is not kept in the core process. It is the sidecar projection `memory_records` in the ultracode-events SQLite store, written by the memory job worker over `propose_commit`. The core `MemoryStoreService` is an in-memory projection of that durable store for the current process.
+Memory is not kept in the core process. It is the sidecar projection `memory_records` in the ultracode-events SQLite store. Extraction is enqueued by proposing a `MemoryExtractionRequested` event; the worker completes the job by proposing a `MemoryExtracted` event, and the sidecar projection writes the record from that event. The production `MemoryStoreService` reads the durable projection through the events client (`packages/opencode/src/memory/service.ts`), so the `core/memory` block reflects the sidecar records as they change.
 
 ## Review API
 

@@ -59,6 +59,8 @@ import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { buildLocationServiceMap } from "@opencode-ai/core/location-services"
+import { MemorySource } from "@opencode-ai/core/memory/source"
+import { MemoryService } from "@/memory/service"
 
 export const AppLayer = AppNodeBuilderV1.build(
   LayerNode.group([
@@ -115,7 +117,7 @@ export const AppLayer = AppNodeBuilderV1.build(
   Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)),
   Layer.provideMerge(
     AppNodeBuilderV1.build(SessionV2.node, [
-      [LocationServiceMap.node, buildLocationServiceMap()],
+      [LocationServiceMap.node, buildLocationServiceMap([[MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode]])],
       [SessionExecution.node, SessionExecutionLocal.node],
     ]),
   ),

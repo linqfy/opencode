@@ -40,8 +40,9 @@ export const enqueueForCompaction = (
     const durable = event.durable
     if (!durable) return
     const key = `mem:${event.data.sessionID}:${durable.seq}`
-    if (deps.claim(key)) return
-    yield* enqueueRequested(deps, key, event.data.sessionID, durable.seq)
+    if (deps.claim.claimed(key)) return
+    const enqueued = yield* enqueueRequested(deps, key, event.data.sessionID, durable.seq)
+    if (enqueued) deps.claim.mark(key)
   })
 
 export const enqueueForIdle = (
@@ -49,9 +50,12 @@ export const enqueueForIdle = (
   event: EventV2.Payload<typeof SessionStatusEvent.Idle>,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const key = `mem:${event.data.sessionID}:idle`
-    if (deps.claim(key)) return
-    yield* enqueueRequested(deps, key, event.data.sessionID, 0)
+    // The event id varies per emission so a session that idles repeatedly gets
+    // a fresh extraction key each time; replaying the same event dedupes.
+    const key = `mem:${event.data.sessionID}:idle:${event.id}`
+    if (deps.claim.claimed(key)) return
+    const enqueued = yield* enqueueRequested(deps, key, event.data.sessionID, 0)
+    if (enqueued) deps.claim.mark(key)
   })
 
 const enqueueRequested = (
@@ -59,7 +63,7 @@ const enqueueRequested = (
   key: string,
   sourceSession: string,
   sourceEndSeq: number,
-): Effect.Effect<void> =>
+): Effect.Effect<boolean> =>
   Effect.tryPromise({
     try: () =>
       deps.client.enqueueMemoryJob(key, {
@@ -77,8 +81,10 @@ const enqueueRequested = (
       }),
     catch: (error) => (error instanceof Error ? error : new Error(String(error))),
   }).pipe(
-    Effect.catch((error) => Effect.logWarning("failed to enqueue memory extraction job", { cause: error })),
-    Effect.asVoid,
+    Effect.matchEffect({
+      onFailure: (error) => Effect.logWarning("failed to enqueue memory extraction job", { cause: error }).pipe(Effect.as(false)),
+      onSuccess: () => Effect.succeed(true),
+    }),
   )
 
 export * as MemoryTriggers from "./triggers"

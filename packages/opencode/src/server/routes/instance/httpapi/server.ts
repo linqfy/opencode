@@ -55,6 +55,7 @@ import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { EventV2 } from "@opencode-ai/core/event"
+import { MemorySource } from "@opencode-ai/core/memory/source"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Npm } from "@opencode-ai/core/npm"
 import { PermissionSaved } from "@opencode-ai/core/permission/saved"
@@ -280,7 +281,10 @@ export function createRoutes(
   corsOptions?: CorsOptions,
   replacements: LayerNode.Replacements = [],
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
-  const locationServiceMapV2 = buildLocationServiceMap(replacements)
+  const locationServiceMapV2 = buildLocationServiceMap([
+    [MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode],
+    ...replacements,
+  ])
 
   return Layer.mergeAll(
     rootApiRoutes,

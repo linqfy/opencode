@@ -162,6 +162,27 @@ describe("memory HttpApi", () => {
     }),
   )
 
+  it.live("empty patch returns 204 without touching the record", () =>
+    Effect.gen(function* () {
+      store = [makeRecord("thread-a", "raw-a")]
+      const directory = yield* tmpdirScoped({ git: true, config: enabledConfig })
+
+      const patched = yield* requestInDirectory("/api/memory/thread-a", directory, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      })
+      expect(patched.status).toBe(204)
+
+      const record = (yield* requestInDirectory("/api/memory/thread-a", directory).pipe(Effect.flatMap((response) => response.json))) as {
+        raw_memory: string
+        edited_by: string | null
+      }
+      expect(record.raw_memory).toBe("raw-a")
+      expect(record.edited_by).toBeNull()
+    }),
+  )
+
   it.live("delete removes the record from the store", () =>
     Effect.gen(function* () {
       store = [makeRecord("thread-a", "a"), makeRecord("thread-b", "b")]

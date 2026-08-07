@@ -12,7 +12,7 @@ import { SessionID } from "@opencode-ai/schema/session-id"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
 import { SessionStatusEvent } from "@opencode-ai/schema/session-status-event"
 import type { MemoryJob } from "@ultracode/events-client"
-import { SchedulerService } from "@/agent/scheduler-service"
+import { SchedulerService, createReadApi } from "@/agent/scheduler-service"
 import { MemoryService } from "@/memory/service"
 import { testEffect, pollWithTimeout } from "../lib/effect"
 import {
@@ -75,8 +75,10 @@ class FakeMemoryClient {
   readonly enqueued: { key: string; kind: unknown }[] = []
   readonly completed: { key: string; kind: unknown }[] = []
   readonly pending: MemoryJob[] = []
+  failEnqueue = false
 
   async enqueueMemoryJob(key: string, kind: unknown) {
+    if (this.failEnqueue) throw new Error("sidecar unavailable")
     this.enqueued.push({ key, kind })
     return { seq: this.enqueued.length, hash: key, duplicate: false }
   }
@@ -89,6 +91,50 @@ class FakeMemoryClient {
   async completeMemoryJob(key: string, kind: unknown) {
     this.completed.push({ key, kind })
     return { seq: this.completed.length, hash: key, duplicate: false }
+  }
+
+  async listMemoryRecords() {
+    return []
+  }
+
+  async getMemoryRecord() {
+    return null
+  }
+
+  async deleteMemoryRecord() {
+    return { seq: 1, hash: "h", duplicate: false }
+  }
+
+  async patchMemoryRecord() {
+    return { seq: 1, hash: "h", duplicate: false }
+  }
+
+  async queryTaskGraph() {
+    return { tasks: [], edges: [], next_cursor: null }
+  }
+
+  async queryTaskDeliverables() {
+    return { items: [], next_cursor: null }
+  }
+
+  async listApprovalHistory() {
+    return { items: [], next_cursor: null }
+  }
+
+  async replay() {
+    return []
+  }
+
+  async statArtifact() {
+    return null
+  }
+
+  async openRange() {
+    return new Uint8Array()
+  }
+
+  async cancelTask() {
+    return { state: "cancellation_pending" as const }
   }
 }
 
@@ -139,27 +185,49 @@ describe("memory triggers", () => {
     }),
   )
 
-  it.effect("enqueues one stable-key extraction job per idle signal", () =>
+  it.effect("enqueues a fresh extraction job per idle emission", () =>
     Effect.gen(function* () {
       const fake = new FakeMemoryClient()
       const listener = memoryTriggerListener({ client: fake, claim: memoryClaimGuard() })
       yield* listener(idle("ses_2"))
       yield* listener(idle("ses_2"))
-      expect(fake.enqueued).toHaveLength(1)
-      expect(fake.enqueued[0]).toEqual({
-        key: "mem:ses_2:idle",
-        kind: {
-          kind: "memory-extraction-requested",
-          data: {
-            request_id: "mem:ses_2:idle",
-            source_session: "ses_2",
-            source_turn: 0,
-            source_end_seq: 0,
-            transcript_artifact_id: TRANSCRIPT_ARTIFACT_ID,
-            extractor_version: EXTRACTOR_VERSION,
-          },
-        },
+      expect(fake.enqueued).toHaveLength(2)
+      expect(fake.enqueued[0]?.key).toStartWith("mem:ses_2:idle:")
+      expect(fake.enqueued[1]?.key).toStartWith("mem:ses_2:idle:")
+      expect(fake.enqueued[0]?.key).not.toBe(fake.enqueued[1]?.key)
+      expect(fake.enqueued[0]?.kind).toEqual({
+        kind: "memory-extraction-requested",
+        data: expect.objectContaining({ source_session: "ses_2", source_end_seq: 0 }),
       })
+    }),
+  )
+
+  it.effect("dedupes duplicate delivery of the same idle emission", () =>
+    Effect.gen(function* () {
+      const fake = new FakeMemoryClient()
+      const listener = memoryTriggerListener({ client: fake, claim: memoryClaimGuard() })
+      const event = idle("ses_2")
+      yield* listener(event)
+      yield* listener(event)
+      expect(fake.enqueued).toHaveLength(1)
+      expect(fake.enqueued[0]?.key).toBe(`mem:ses_2:idle:${event.id}`)
+    }),
+  )
+
+  it.effect("does not mark a compaction key claimed when the enqueue RPC fails", () =>
+    Effect.gen(function* () {
+      const fake = new FakeMemoryClient()
+      const guard = memoryClaimGuard()
+      const listener = memoryTriggerListener({ client: fake, claim: guard })
+      fake.failEnqueue = true
+      yield* listener(compactionEnded("ses_fail", 42))
+      expect(fake.enqueued).toHaveLength(0)
+      expect(guard.claimed("mem:ses_fail:42")).toBe(false)
+      fake.failEnqueue = false
+      yield* listener(compactionEnded("ses_fail", 42))
+      expect(fake.enqueued).toHaveLength(1)
+      expect(fake.enqueued[0]?.key).toBe("mem:ses_fail:42")
+      expect(guard.claimed("mem:ses_fail:42")).toBe(true)
     }),
   )
 
@@ -178,7 +246,8 @@ describe("memory triggers", () => {
       const listener = memoryTriggerListener({ client: fake, claim: memoryClaimGuard() })
       yield* listener(compactionEnded("ses_3", 42))
       yield* listener(idle("ses_3"))
-      expect(fake.enqueued.map((entry) => entry.key)).toEqual(["mem:ses_3:42", "mem:ses_3:idle"])
+      expect(fake.enqueued.map((entry) => entry.key)[0]).toBe("mem:ses_3:42")
+      expect(fake.enqueued.map((entry) => entry.key)[1]).toStartWith("mem:ses_3:idle:")
     }),
   )
 })
@@ -311,7 +380,10 @@ describe("memory service gate", () => {
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Config.Service, { entries: () => Effect.succeed([...entries]) }),
-          Layer.mock(SchedulerService.Service, { events: Effect.succeed(client) }),
+          Layer.mock(SchedulerService.Service, {
+            events: Effect.succeed(client),
+            read: Effect.succeed(createReadApi(client, undefined)),
+          }),
           Layer.mock(SessionStore.Service, {}),
           Layer.mock(EventV2.Service, {
             listen: (listener) => {

@@ -180,4 +180,60 @@ describe("MemorySource", () => {
       expect(refreshed).toMatchObject({ _tag: "Updated", text: "Previously loaded memory no longer applies." })
     }),
   )
+
+  const cappedBlock = new ClearableMemoryStore()
+  const cappedBlockIt = makeIt(cappedBlock)
+
+  cappedBlockIt.effect("renders a block no larger than 4KB for worst-case selections", () =>
+    Effect.gen(function* () {
+      const title = "T".repeat(4000)
+      for (const index of Array.from({ length: 5 }, (_, index) => index)) {
+        yield* Effect.promise(() => cappedBlock.upsert(record(`t${index}`, { rawMemory: title })))
+      }
+      const registry = yield* SystemContextRegistry.Service
+      const initialized = yield* SystemContext.initialize(yield* registry.load())
+
+      expect(new TextEncoder().encode(initialized.baseline).length).toBeLessThanOrEqual(4096)
+      expect(initialized.baseline.endsWith("[memory block truncated]")).toBe(true)
+    }),
+  )
+})
+
+describe("MemorySource config precedence", () => {
+  const precedenceConfig = Layer.succeed(
+    Config.Service,
+    Config.Service.of({
+      entries: () =>
+        Effect.succeed([
+          new Config.Document({
+            type: "document",
+            info: new Config.Info({ memory: new ConfigMemory.Info({ enabled: true }) }),
+          }),
+          new Config.Document({
+            type: "document",
+            info: new Config.Info({ memory: new ConfigMemory.Info({ enabled: false }) }),
+          }),
+        ]),
+    }),
+  )
+
+  const it = testEffect(
+    AppNodeBuilder.build(memoryNode, [
+      [Location.node, locationLayer],
+      [Global.node, Global.layerWith({ config: "/global" })],
+      [Config.node, precedenceConfig],
+      [
+        MemorySource.memoryStoreNode,
+        Layer.succeed(MemorySource.MemoryStoreService, MemorySource.MemoryStoreService.of(new ClearableMemoryStore())),
+      ],
+    ]),
+  )
+
+  it.effect("higher-priority enabled:false overrides lower-priority enabled:true", () =>
+    Effect.gen(function* () {
+      const registry = yield* SystemContextRegistry.Service
+      const initialized = yield* SystemContext.initialize(yield* registry.load())
+      expect(initialized.baseline).not.toContain("## Memory")
+    }),
+  )
 })

@@ -8,11 +8,12 @@ import { Api } from "@opencode-ai/server/api"
 
 const DefaultPageSize = 100
 const FetchLimit = 200
+const MinLimit = 1
+const MaxLimit = 200
 
 const isEnabled = (config: Config.Interface): Effect.Effect<boolean> =>
   Effect.gen(function* () {
-    const entries = yield* config.entries()
-    return entries.some((entry) => entry.type === "document" && entry.info.memory?.enabled === true)
+    return Config.latest(yield* config.entries(), "memory")?.enabled === true
   })
 
 // The sidecar projection returns one bounded page; the handler slices it with
@@ -28,6 +29,11 @@ const page = (records: MemoryRecord[], cursor: string | undefined, limit: number
   }
 }
 
+const clampLimit = (limit: number | undefined): number => {
+  if (limit === undefined) return DefaultPageSize
+  return Math.min(MaxLimit, Math.max(MinLimit, limit))
+}
+
 export const memoryHandlers = HttpApiBuilder.group(Api, "server.memory", (handlers) =>
   Effect.gen(function* () {
     const scheduler = yield* SchedulerService.Service
@@ -39,7 +45,7 @@ export const memoryHandlers = HttpApiBuilder.group(Api, "server.memory", (handle
           const config = yield* Config.Service
           if (!(yield* isEnabled(config))) return yield* new MemoryDisabledError({ message: "Memory is disabled" })
           const records = yield* Effect.promise(() => read.listMemoryRecords({ limit: FetchLimit })).pipe(Effect.orDie)
-          return page(records, ctx.query.cursor, ctx.query.limit ?? DefaultPageSize)
+          return page(records, ctx.query.cursor, clampLimit(ctx.query.limit))
         }),
       )
       .handle("memory.get", (ctx) =>
@@ -65,6 +71,7 @@ export const memoryHandlers = HttpApiBuilder.group(Api, "server.memory", (handle
             ...(ctx.payload.rollout_summary === undefined ? {} : { rolloutSummary: ctx.payload.rollout_summary }),
             ...(ctx.payload.rollout_slug === undefined ? {} : { rolloutSlug: ctx.payload.rollout_slug }),
           }
+          if (Object.keys(patch).length === 0) return HttpApiSchema.NoContent.make()
           yield* Effect.tryPromise({
             try: () => read.patchMemoryRecord({ threadId: ctx.params.threadID, patch }),
             catch: (error) => (error instanceof Error ? error : new Error(String(error))),

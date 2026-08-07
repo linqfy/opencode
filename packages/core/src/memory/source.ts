@@ -35,13 +35,32 @@ type MemoryValue = Schema.Schema.Type<typeof MemoryValue>
 
 const codec = Schema.toCodecJson(MemoryValue)
 
+const MAX_RENDER_BYTES = 4096
+const BLOCK_TRUNCATION_MARKER = "\n[memory block truncated]"
+
 const renderBlock = (value: MemoryValue): string => {
   const lines = value.records.map((entry) => `- ${entry.title} (${memoryAge(entry.updatedAt)})`)
   if (value.omitted > 0) lines.push(`+${value.omitted} more memories`)
-  return ["## Memory", ...lines].join("\n")
+  return capBlock(["## Memory", ...lines].join("\n"))
 }
 
-const observe = (store: MemoryStore) =>
+const capBlock = (block: string): string => {
+  if (byteLength(block) <= MAX_RENDER_BYTES) return block
+  const budget = MAX_RENDER_BYTES - byteLength(BLOCK_TRUNCATION_MARKER)
+  return `${truncateToBytes(block, budget)}${BLOCK_TRUNCATION_MARKER}`
+}
+
+const byteLength = (text: string): number => new TextEncoder().encode(text).length
+
+const decoder = new TextDecoder()
+
+const truncateToBytes = (text: string, budget: number): string => {
+  const bytes = new TextEncoder().encode(text)
+  if (bytes.length <= budget) return text
+  return decoder.decode(bytes.subarray(0, budget)).replace(/\uFFFD$/u, "")
+}
+
+export const observe = (store: MemoryStore) =>
   Effect.gen(function* () {
     const all = yield* Effect.promise(() => store.list())
     if (all.length === 0) return SystemContext.empty
@@ -96,13 +115,13 @@ export const memoryStoreNode = makeLocationNode({ service: MemoryStoreService, l
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const store = yield* MemoryStoreService
     const registry = yield* SystemContextRegistry.Service
     const config = yield* Config.Service
-    const memoryEnabled = (yield* config.entries()).some(
-      (entry) => entry.type === "document" && entry.info.memory?.enabled === true,
-    )
+    const memoryEnabled = Config.latest(yield* config.entries(), "memory")?.enabled === true
     if (!memoryEnabled) return
+    // Gate before touching the store so a disabled location never builds a
+    // sidecar-backed store (or any store) at all.
+    const store = yield* MemoryStoreService
     yield* registry.register({ key, load: observe(store) })
   }),
 )
