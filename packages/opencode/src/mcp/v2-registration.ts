@@ -1,3 +1,4 @@
+import type { JSONSchema7 } from "ai"
 import { Effect, Schema, Scope } from "effect"
 import { ToolFailure } from "@opencode-ai/llm"
 import { Tool } from "@opencode-ai/core/tool/tool"
@@ -35,11 +36,49 @@ function mcpTool(serverName: string, name: string, tool: McpTool): Tool.AnyTool 
   return Tool.make({
     namespace: `mcp:${serverName}`,
     description: tool.def.description ?? "",
-    input: Schema.Unknown,
+    input: inputSchemaToSchema(tool.def.inputSchema as JSONSchema7),
     output: Schema.Unknown,
     execute: (args) => callTool(tool, args),
     toModelOutput: ({ output }) => modelOutput(output as CallToolResult),
   })
+}
+
+// Project the MCP tool's JSON Schema input into an Effect Schema so the model-visible
+// definition advertises the argument shape. Unsupported constructs fall back to Schema.Unknown.
+function inputSchemaToSchema(inputSchema: JSONSchema7): Schema.Codec<any, any, never, never> {
+  if (typeof inputSchema !== "object" || inputSchema === null || inputSchema.$ref !== undefined) return Schema.Unknown
+  const type = Array.isArray(inputSchema.type) ? undefined : inputSchema.type
+  if (type === "object" || inputSchema.properties !== undefined) {
+    const properties = (inputSchema.properties ?? {}) as Record<string, JSONSchema7>
+    const required = new Set(
+      Array.isArray(inputSchema.required)
+        ? inputSchema.required.filter((key): key is string => typeof key === "string")
+        : [],
+    )
+    const fields: Record<string, Schema.Codec<any, any, never, never>> = {}
+    for (const [name, property] of Object.entries(properties)) {
+      const propertySchema = inputSchemaToSchema(property)
+      fields[name] = required.has(name) ? propertySchema : Schema.optional(propertySchema)
+    }
+    return Schema.Struct(fields)
+  }
+  switch (type) {
+    case "string":
+      return Schema.String
+    case "number":
+      return Schema.Number
+    case "integer":
+      return Schema.Int
+    case "boolean":
+      return Schema.Boolean
+    case "null":
+      return Schema.Null
+    case "array": {
+      const items = Array.isArray(inputSchema.items) || typeof inputSchema.items !== "object" ? {} : (inputSchema.items ?? {})
+      return Schema.Array(inputSchemaToSchema(items))
+    }
+  }
+  return Schema.Unknown
 }
 
 function callTool(tool: McpTool, args: unknown): Effect.Effect<CallToolResult, ToolFailure> {

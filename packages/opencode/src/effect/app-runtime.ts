@@ -34,6 +34,7 @@ import { LLM } from "@/session/llm"
 import { LSP } from "@/lsp/lsp"
 import { MCP } from "@/mcp"
 import { McpAuth } from "@/mcp/auth"
+import { McpV2Tools } from "@/mcp/v2-location"
 import { Command } from "@/command"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
@@ -61,6 +62,7 @@ import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { buildLocationServiceMap } from "@opencode-ai/core/location-services"
 import { MemorySource } from "@opencode-ai/core/memory/source"
 import { MemoryService } from "@/memory/service"
+import { ToolRegistry as ToolRegistryV2 } from "@opencode-ai/core/tool/registry"
 
 export const AppLayer = AppNodeBuilderV1.build(
   LayerNode.group([
@@ -117,7 +119,10 @@ export const AppLayer = AppNodeBuilderV1.build(
   Layer.provideMerge(AppNodeBuilderV1.build(Ripgrep.node)),
   Layer.provideMerge(
     AppNodeBuilderV1.build(SessionV2.node, [
-      [LocationServiceMap.node, buildLocationServiceMap([[MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode]])],
+      [LocationServiceMap.node, buildLocationServiceMap([
+        [MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode],
+        [ToolRegistryV2.toolsNode, McpV2Tools.node],
+      ])],
       [SessionExecution.node, SessionExecutionLocal.node],
     ]),
   ),

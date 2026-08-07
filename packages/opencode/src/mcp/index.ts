@@ -26,7 +26,7 @@ import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { TuiEvent } from "@/server/tui-event"
-import { Cause, Effect, Exit, Layer, Context, Schema, Stream, Option, Scope } from "effect"
+import { Cause, Effect, Exit, Layer, Context, Schema, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -34,8 +34,6 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { McpCatalog } from "./catalog"
 import { McpEvent } from "@opencode-ai/schema/mcp-event"
 import { McpBrowser } from "./browser"
-import { Tools } from "@opencode-ai/core/tool/tools"
-import { registerMcpServerTools } from "./v2-registration"
 
 const DEFAULT_TIMEOUT = 30_000
 const CLIENT_OPTIONS = {
@@ -147,7 +145,6 @@ interface State {
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
   instructions: Record<string, string>
-  registrations: Record<string, Scope.Closeable>
 }
 
 export interface ServerInstructions {
@@ -450,13 +447,9 @@ const layer = Layer.effect(
         delete s.instructions[name]
         s.status[name] = { status: "failed", error: "Connection closed" }
         bridge.fork(
-          unregisterV2Tools(s, name).pipe(
-            Effect.andThen(
-              Effect.logWarning("MCP connection closed", { server: name }).pipe(
-                Effect.andThen(events.publish(ToolsChanged, { server: name })),
-                Effect.ignore,
-              ),
-            ),
+          Effect.logWarning("MCP connection closed", { server: name }).pipe(
+            Effect.andThen(events.publish(ToolsChanged, { server: name })),
+            Effect.ignore,
           ),
         )
       }
@@ -474,11 +467,7 @@ const layer = Layer.effect(
         if (s.clients[name] !== client || s.status[name]?.status !== "connected") return
 
         s.defs[name] = listed
-        await bridge.promise(
-          registerV2Tools(s, name, timeout).pipe(
-            Effect.andThen(events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)),
-          ),
-        )
+        await bridge.promise(events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore))
       })
     }
 
@@ -500,28 +489,6 @@ const layer = Layer.effect(
       }
     }
 
-    const unregisterV2Tools = Effect.fnUntraced(function* (s: State, name: string) {
-      const scope = s.registrations[name]
-      if (!scope) return
-      delete s.registrations[name]
-      yield* Scope.close(scope, Exit.void).pipe(Effect.ignore)
-    })
-
-    const registerV2Tools = Effect.fnUntraced(function* (s: State, name: string, timeout?: number) {
-      yield* unregisterV2Tools(s, name)
-      const option = yield* Effect.serviceOption(Tools.Service)
-      if (Option.isNone(option)) return
-      const client = s.clients[name]
-      const listed = s.defs[name]
-      if (!client || !listed) return
-      const scope = yield* Scope.make()
-      yield* registerMcpServerTools(
-        name,
-        listed.map((def) => ({ def, client, timeout })),
-      ).pipe(Effect.provideService(Tools.Service, option.value), Scope.provide(scope), Effect.orDie)
-      s.registrations[name] = scope
-    })
-
     const state = yield* InstanceState.make<State>(
       Effect.fn("MCP.state")(function* () {
         const cfg = yield* cfgSvc.get()
@@ -533,7 +500,6 @@ const layer = Layer.effect(
           clients: {},
           defs: {},
           instructions: {},
-          registrations: {},
         }
 
         yield* Effect.forEach(
@@ -557,7 +523,6 @@ const layer = Layer.effect(
                 s.defs[key] = result.defs!
                 if (result.instructions) s.instructions[key] = result.instructions
                 watch(s, key, result.mcpClient, bridge, mcp.timeout)
-                yield* registerV2Tools(s, key, mcp.timeout)
               }
             }),
           { concurrency: "unbounded" },
@@ -569,11 +534,6 @@ const layer = Layer.effect(
             s.clients = {}
             s.defs = {}
             s.instructions = {}
-            yield* Effect.forEach(
-              Object.keys(s.registrations),
-              (name) => unregisterV2Tools(s, name),
-              { concurrency: "unbounded" },
-            )
             yield* Effect.forEach(
               clients,
               (client) =>
@@ -605,7 +565,6 @@ const layer = Layer.effect(
       delete s.defs[name]
       delete s.instructions[name]
       return Effect.gen(function* () {
-        yield* unregisterV2Tools(s, name)
         if (!client) return
         yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
       })
@@ -627,7 +586,6 @@ const layer = Layer.effect(
       if (instructions) s.instructions[name] = instructions
       else delete s.instructions[name]
       watch(s, name, client, bridge, timeout)
-      yield* registerV2Tools(s, name, timeout)
       if (previous) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
       return s.status[name]
     })

@@ -19,6 +19,7 @@ import { Installation } from "@/installation"
 import { LSP } from "@/lsp/lsp"
 import { MCP } from "@/mcp"
 import { McpAuth } from "@/mcp/auth"
+import { McpV2Tools } from "@/mcp/v2-location"
 import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
 import { PluginPtyEnvironment } from "@/plugin/pty-environment"
@@ -67,6 +68,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
+import { ToolRegistry as ToolRegistryV2 } from "@opencode-ai/core/tool/registry"
 import { lazy } from "@/util/lazy"
 import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@opencode-ai/server/cors"
 import { serveUIEffect } from "@/server/shared/ui"
@@ -283,6 +285,7 @@ export function createRoutes(
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = buildLocationServiceMap([
     [MemorySource.memoryStoreNode, MemoryService.sidecarMemoryStoreNode],
+    [ToolRegistryV2.toolsNode, McpV2Tools.node],
     ...replacements,
   ])
 

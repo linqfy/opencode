@@ -61,6 +61,38 @@ describe("registerMcpServerTools", () => {
     }),
   )
 
+  it.effect("advertises the MCP tool's input schema in the materialized definition", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const scope = yield* Scope.make()
+      const shapedTools: McpTool[] = [
+        {
+          def: {
+            name: "shaped_tool",
+            description: "tool with a shape",
+            inputSchema: {
+              type: "object",
+              properties: { city: { type: "string" }, limit: { type: "integer" } },
+              required: ["city"],
+            },
+          },
+          client: {
+            callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
+          } as unknown as McpTool["client"],
+        },
+      ]
+      yield* registerMcpServerTools(serverName, shapedTools).pipe(Scope.provide(scope))
+
+      const definition = (yield* registry.materialize()).definitions[0]!
+      const schema = definition.inputSchema as Record<string, unknown>
+      expect((schema.properties as Record<string, unknown>).city).toBeDefined()
+      expect((schema.properties as Record<string, unknown>).limit).toBeDefined()
+      expect(schema.required).toEqual(["city"])
+
+      yield* Scope.close(scope, Exit.void)
+    }),
+  )
+
   it.effect("settles calls through the shared transport and normalizes text, image, and error results", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service

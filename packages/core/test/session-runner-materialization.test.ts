@@ -303,7 +303,7 @@ describe("SessionRunner deferred tool materialization", () => {
     }),
   )
 
-  it.effect("reuses the memoized materialization verbatim when the fingerprint is unchanged", () =>
+  it.effect("busts the memo at the next provider-turn boundary when the tool set changes mid-drain", () =>
     Effect.gen(function* () {
       yield* setup
       const registry = yield* ToolRegistry.Service
@@ -325,7 +325,7 @@ describe("SessionRunner deferred tool materialization", () => {
 
       expect(requests).toHaveLength(2)
       expect(toolNames(requests[0]!)).toEqual(["alpha", "search_tools"])
-      expect(toolNames(requests[1]!)).toEqual(["alpha", "search_tools"])
+      expect(toolNames(requests[1]!).toSorted()).toEqual(["alpha", "search_tools", "zeta"].toSorted())
     }),
   )
 

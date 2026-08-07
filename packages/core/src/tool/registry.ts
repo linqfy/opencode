@@ -23,6 +23,8 @@ export type ExecuteInput = {
 
 export interface Interface {
   readonly materialize: (permissions?: PermissionV2.Ruleset, query?: string) => Effect.Effect<Materialization>
+  /** Monotonic counter that increments on every registration set change (register or dispose). */
+  readonly generation: () => Effect.Effect<number>
   /** Internal registration capability exposed publicly only through Tools.Service. */
   readonly register: (tools: Readonly<Record<string, AnyTool>>) => Effect.Effect<void, RegistrationError, Scope.Scope>
 }
@@ -49,6 +51,7 @@ const registryLayer = Layer.effect(
     const resources = yield* ToolOutputStore.Service
     type Registration = { readonly identity: object; readonly tool: AnyTool }
     const local = new Map<string, Array<{ readonly token: object; readonly registration: Registration }>>()
+    let generation = 0
 
     const settleWith = Effect.fn("ToolRegistry.settle")(function* (input: ExecuteInput, advertised?: object) {
       const registration =
@@ -94,6 +97,7 @@ const registryLayer = Layer.effect(
             const token = {}
             for (const [name, tool] of entries)
               local.set(name, [...(local.get(name) ?? []), { token, registration: { identity: {}, tool } }])
+            generation++
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
                 for (const [name] of entries) {
@@ -101,11 +105,13 @@ const registryLayer = Layer.effect(
                   if (registrations.length > 0) local.set(name, registrations)
                   else local.delete(name)
                 }
+                generation++
               }),
             )
           }),
         )
       }),
+      generation: () => Effect.sync(() => generation),
       materialize: Effect.fn("ToolRegistry.materialize")(function* (permissions = [], query) {
         const registrations = new Map(applications.entries())
         for (const [name, entries] of local) {

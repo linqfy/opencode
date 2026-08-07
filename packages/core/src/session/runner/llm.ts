@@ -178,6 +178,8 @@ const layer = Layer.effect(
 
     // A new query fingerprint only takes effect at the next provider-turn boundary: the in-flight turn
     // keeps the definitions it already materialized, and an identical fingerprint reuses them verbatim.
+    // The registry generation busts the memo when a tool-set change lands mid-drain so the new set is
+    // advertised on the next provider turn.
     const materializeTools = Effect.fn("SessionRunner.materializeTools")(function* (
       permissions: PermissionV2.Ruleset | undefined,
       query: string | undefined,
@@ -185,7 +187,7 @@ const layer = Layer.effect(
       memo: ToolMemo,
     ) {
       if (isLastStep) return undefined
-      const fingerprint = query
+      const fingerprint = `${yield* tools.generation()}\n${query ?? ""}`
       if (memo.activeFingerprint === fingerprint && memo.materialization !== undefined) return memo.materialization
       const materialization = yield* tools.materialize(permissions, query)
       memo.activeFingerprint = fingerprint
