@@ -1,7 +1,7 @@
 export * as SessionCompaction from "./compaction"
 
 import { LLM, LLMError, LLMEvent, Message, type LLMRequest, type Model } from "@opencode-ai/llm"
-import { DateTime, Effect, Stream } from "effect"
+import { Context, DateTime, Effect, Stream } from "effect"
 import type { Config } from "../config"
 import type { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -9,7 +9,8 @@ import { SessionMessage } from "./message"
 import { SessionSchema } from "./schema"
 import { Token } from "../util/token"
 import { Planner } from "@ultracode/context"
-import { toPlannerMessages } from "./compaction-adapter"
+import { toPlannerMessages, toPlannerText } from "./compaction-adapter"
+import { fallbackCheckpoint, parseCheckpoint } from "./compaction-summarize"
 
 const DEFAULT_BUFFER = 20_000
 const DEFAULT_KEEP_TOKENS = 8_000
@@ -85,49 +86,6 @@ export const serializeToolContent = (content: SessionMessage.ToolStateCompleted[
     )
     .join("\n")
 
-const serialize = (message: SessionMessage.Message, cleared?: Set<string>) => {
-  if (message.type === "user") {
-    const files = message.files?.map((file) => `[Attached ${file.mime}: ${file.name ?? file.uri}]`) ?? []
-    return [`[User]: ${message.text}`, ...files].join("\n")
-  }
-  if (message.type === "assistant") {
-    return message.content
-      .flatMap((part) => {
-        if (part.type === "text") return [`[Assistant]: ${part.text}`]
-        if (part.type === "reasoning") return part.text ? [`[Assistant reasoning]: ${part.text}`] : []
-        const input = typeof part.state.input === "string" ? part.state.input : JSON.stringify(part.state.input)
-        if (part.state.status === "completed")
-          return [
-            `[Assistant tool call]: ${part.name}(${input})`,
-            cleared?.has(part.id) === true
-              ? `[Tool result]: ${Planner.CLEARED_MESSAGE}`
-              : `[Tool result]: ${truncate(serializeToolContent(part.state.content))}`,
-          ]
-        if (part.state.status === "error")
-          return [`[Assistant tool call]: ${part.name}(${input})`, `[Tool error]: ${part.state.error.message}`]
-        return [`[Assistant tool call]: ${part.name}(${input})`]
-      })
-      .join("\n")
-  }
-  if (message.type === "system") return `[System update]: ${message.text}`
-  if (message.type === "synthetic") return `[Synthetic context]: ${message.text}`
-  if (message.type === "shell") return `[Shell]: ${message.command}\n${truncate(message.output)}`
-  return ""
-}
-
-// Runs the ultracode engine's protection-aware microcompact over the history and
-// returns the SessionMessage tool-part ids whose results it clears. The engine
-// protects the recent tail, the most-recent tool results, and tagged parts
-// (user-authored / active-failure), so only stale tool output is cleared before
-// summarization — reducing tokens without losing recent context. The adapter
-// gives cleared tool-result parts ids of the form `${toolPartId}-result`; strip
-// the suffix to map back to the SessionMessage tool part id used in `serialize`.
-const clearedToolPartIds = (entries: readonly Entry[]): Set<string> => {
-  const plannerMessages = toPlannerMessages(entries)
-  const { clearedPartIds } = Planner.microCompact(plannerMessages, Planner.DEFAULT_COMPACTION_CONFIG)
-  return new Set(clearedPartIds.map((id) => id.replace(/-result$/, "")))
-}
-
 const settings = (documents: readonly Config.Entry[]) => {
   const configured = documents
     .filter((entry): entry is Config.Document => entry.type === "document")
@@ -142,40 +100,6 @@ const settings = (documents: readonly Config.Entry[]) => {
   )
 }
 
-const select = (
-  entries: readonly Entry[],
-  tokens: number,
-  cleared?: Set<string>,
-): { readonly head: string; readonly recent: string } | undefined => {
-  const conversation = entries
-    .filter((entry) => entry.message.type !== "compaction")
-    .map((entry) => serialize(entry.message, cleared))
-    .filter(Boolean)
-  if (conversation.length === 0) return
-  let total = 0
-  let split = conversation.length
-  let splitPrefix = ""
-  let splitSuffix = ""
-  for (let index = conversation.length - 1; index >= 0; index--) {
-    const next = total + Token.estimate(conversation[index])
-    if (next > tokens) {
-      const remaining = Math.max(0, tokens - total) * 4
-      if (remaining > 0) {
-        splitPrefix = conversation[index].slice(0, -remaining)
-        splitSuffix = conversation[index].slice(-remaining)
-        split = index + 1
-      }
-      break
-    }
-    total = next
-    split = index
-  }
-  return {
-    head: [...conversation.slice(0, split), splitPrefix].filter(Boolean).join("\n\n"),
-    recent: [splitSuffix, ...conversation.slice(split)].filter(Boolean).join("\n\n"),
-  }
-}
-
 export const buildPrompt = (input: { readonly previousSummary?: string; readonly context: readonly string[] }) =>
   [
     input.previousSummary
@@ -185,58 +109,176 @@ export const buildPrompt = (input: { readonly previousSummary?: string; readonly
     ...input.context,
   ].join("\n\n")
 
+// The anchored-summary selection: splits the rendered conversation at the keep
+// budget so the oldest content becomes `head` (fed to the summarizer) and the
+// most recent content becomes `recent` (carried forward in the Compaction
+// message). Operates on the post-stage render produced by the adapter.
+const selectLines = (
+  lines: readonly string[],
+  tokens: number,
+): { readonly head: string; readonly recent: string } | undefined => {
+  if (lines.length === 0) return
+  let total = 0
+  let split = lines.length
+  let splitPrefix = ""
+  let splitSuffix = ""
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const next = total + Token.estimate(lines[index])
+    if (next > tokens) {
+      const remaining = Math.max(0, tokens - total) * 4
+      if (remaining > 0) {
+        splitPrefix = lines[index].slice(0, -remaining)
+        splitSuffix = lines[index].slice(-remaining)
+        split = index + 1
+      }
+      break
+    }
+    total = next
+    split = index
+  }
+  return {
+    head: [...lines.slice(0, split), splitPrefix].filter(Boolean).join("\n\n"),
+    recent: [splitSuffix, ...lines.slice(split)].filter(Boolean).join("\n\n"),
+  }
+}
+
+// Replaces an oversized tool result with a truncated preview that keeps the
+// managed output path reference so the summarizer can still cite where the
+// full output lives. The result is marked cleared so microCompact does not
+// re-clear it.
+const artifactPreview = (part: Planner.PlannerPart): Planner.PlannerPart => {
+  const managed = part.text.match(/\[Managed output: [^\]]*\]$/)
+  const body = managed ? part.text.slice(0, -managed[0].length).trimEnd() : part.text
+  const text = `${truncate(body)}${managed ? `\n${managed[0]}` : ""}`
+  return { ...part, text, tokens: Token.estimate(text), cleared: true }
+}
+
+type PipelineDependencies = {
+  readonly llm: Dependencies["llm"]
+  readonly config: readonly Config.Entry[]
+}
+
+// The injected summarize seam: runs the LLM stream over the post-stage
+// conversation (selected head + previous compaction summary/recent), parses the
+// output into the typed checkpoint, and pins the recent tail's start message id
+// so the checkpoint's `recentTailStartId` always references an existing message.
+const summarize = (input: {
+  readonly dependencies: PipelineDependencies
+  readonly config: Settings
+  readonly context: Context.Context<never>
+  readonly previousSummary?: string
+  readonly previousRecent?: string
+  readonly model: Model
+  readonly output: number
+  readonly skip: ReadonlySet<string>
+}) => async (messages: readonly Planner.PlannerMessage[]): Promise<Planner.CompactionCheckpoint> => {
+  const tailStart = Planner.recentTailStart(messages, Planner.DEFAULT_COMPACTION_CONFIG.keepRecentTurns)
+  const recentTailStartId = messages[tailStart]?.id
+  const selected = selectLines(toPlannerText(messages, input.skip), input.config.tokens)
+  const summaryPrompt = buildPrompt({
+    previousSummary: input.previousSummary,
+    context: [input.previousRecent ?? "", selected?.head ?? ""].filter(Boolean),
+  })
+  const summaryOutput = Math.min(input.output || SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS)
+  const chunks: string[] = []
+  let failed = false
+  const effect = input.dependencies.llm
+    .stream(
+      LLM.request({
+        model: input.model,
+        messages: [Message.user(summaryPrompt)],
+        tools: [],
+        generation: { maxTokens: summaryOutput },
+      }),
+    )
+    .pipe(
+      Stream.runForEach((event) => {
+        if (LLMEvent.is.providerError(event)) failed = true
+        if (LLMEvent.is.textDelta(event)) chunks.push(event.text)
+        return Effect.void
+      }),
+      Effect.catchTag("LLM.Error", () => Effect.void),
+    )
+  await Effect.runPromiseWith(input.context)(effect).catch(() => {
+    failed = true
+  })
+  const text = failed ? "" : chunks.join("")
+  const checkpoint = parseCheckpoint(text) ?? fallbackCheckpoint(text)
+  return { ...checkpoint, objective: text, recentTailStartId }
+}
+
+// The controller's single compaction entry: runs the staged planner over the
+// history, renders the post-stage conversation back for anchored-summary
+// selection, and returns the Compaction message payload plus the mapped cleared
+// tool-part ids and the typed checkpoint. Event publishing stays in the caller.
+export const CompactionPipeline = {
+  run: Effect.fn("CompactionPipeline.run")(function* (dependencies: PipelineDependencies, input: Input) {
+    const config = settings(dependencies.config)
+    const compactionIds = new Set<string>(
+      input.entries.filter((entry) => entry.message.type === "compaction").map((entry) => entry.message.id),
+    )
+    const plannerMessages = toPlannerMessages(input.entries)
+    if (!plannerMessages.some((message) => !compactionIds.has(message.id))) return undefined
+    const previous = input.entries.find((entry) => entry.message.type === "compaction")?.message
+    const previousSummary = previous?.type === "compaction" ? previous.summary : undefined
+    const previousRecent = previous?.type === "compaction" ? previous.recent : undefined
+    const preflight = selectLines(toPlannerText(plannerMessages, compactionIds), config.tokens)
+    if (preflight === undefined || (preflight.head.length === 0 && previousSummary === undefined)) return undefined
+    const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
+    const context = yield* Effect.context()
+    const result = yield* Effect.promise(() =>
+      Planner.compactConversation(plannerMessages, Planner.DEFAULT_COMPACTION_CONFIG, {
+        artifactPreview,
+        summarize: summarize({
+          dependencies,
+          config,
+          context,
+          previousSummary,
+          previousRecent,
+          model: input.model,
+          output,
+          skip: compactionIds,
+        }),
+      }),
+    )
+    const selected = selectLines(toPlannerText(result.messages, compactionIds), config.tokens)
+    const summaryMessage = SessionMessage.Compaction.make({
+      id: SessionMessage.ID.create(),
+      type: "compaction",
+      reason: "auto",
+      summary: result.checkpoint.objective,
+      recent: selected?.recent ?? "",
+      time: { created: yield* DateTime.now },
+    })
+    return {
+      summaryMessage,
+      clearedPartIds: result.clearedPartIds.map((id) => id.replace(/-result$/, "")),
+      checkpoint: result.checkpoint,
+    }
+  }),
+}
+
 export const make = (dependencies: Dependencies) => {
   const config = settings(dependencies.config)
   const compactAfterOverflow = Effect.fn("SessionCompaction.compactAfterOverflow")(function* (input: Input) {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
-    const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
-    const selected = select(input.entries, config.tokens, clearedToolPartIds(input.entries))
-    const previousSummary = input.entries.find((entry) => entry.message.type === "compaction")?.message
-    if (!selected || (selected.head.length === 0 && previousSummary?.type !== "compaction")) return false
-    const summaryPrompt = buildPrompt({
-      previousSummary: previousSummary?.type === "compaction" ? previousSummary.summary : undefined,
-      context: [previousSummary?.type === "compaction" ? previousSummary.recent : "", selected.head].filter(Boolean),
-    })
-    const summaryOutput = Math.min(output || SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS)
-    if (Token.estimate(summaryPrompt) > context - summaryOutput) return false
-    const messageID = SessionMessage.ID.create()
+    const result = yield* CompactionPipeline.run(dependencies, input)
+    if (result === undefined || !result.summaryMessage.summary.trim()) return false
+    const messageID = result.summaryMessage.id
     yield* dependencies.events.publish(SessionEvent.Compaction.Started, {
       sessionID: input.sessionID,
       messageID,
       timestamp: yield* DateTime.now,
       reason: "auto",
     })
-
-    const chunks: string[] = []
-    let failed = false
-    const summarized = yield* dependencies.llm
-      .stream(
-        LLM.request({
-          model: input.model,
-          messages: [Message.user(summaryPrompt)],
-          tools: [],
-          generation: { maxTokens: summaryOutput },
-        }),
-      )
-      .pipe(
-        Stream.runForEach((event) => {
-          if (LLMEvent.is.providerError(event)) failed = true
-          if (LLMEvent.is.textDelta(event)) chunks.push(event.text)
-          return Effect.void
-        }),
-        Effect.as(true),
-        Effect.catchTag("LLM.Error", () => Effect.succeed(false)),
-      )
-    const summary = chunks.join("")
-    if (!summarized || failed || !summary.trim()) return false
     yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
       sessionID: input.sessionID,
       messageID,
       timestamp: yield* DateTime.now,
       reason: "auto",
-      text: summary,
-      recent: selected.recent,
+      text: result.summaryMessage.summary,
+      recent: result.summaryMessage.recent,
     })
     return true
   })
