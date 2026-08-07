@@ -56,7 +56,7 @@ Producer capture limits are separate. For example, Bash keeps `AppProcess.maxOut
 
 - The model-visible tool set is query-driven: `ToolRegistry.materialize(permissions, query)` derives definitions and, for a non-empty query, synthesizes `search_tools` for deferred discovery of top matches.
 - The runner holds a drain-scoped sticky query fingerprint; an identical fingerprint reuses the materialized set verbatim, and tool sets transition only at safe provider-turn boundaries.
-- MCP tools register canonically via `registerMcpServerTools` with V1-identical tool names and permission mapping; plugin tools register through the `ToolDomain` transform domain under the `plugin:<plugin-id>` namespace.
+- MCP tools register canonically via `registerMcpServerTools` with V1-identical tool names and permission mapping; plugin tools register through the `ToolDomain` transform domain with a plugin-supplied namespace.
 
 ## Current Gaps
 
