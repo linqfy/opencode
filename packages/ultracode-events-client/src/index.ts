@@ -30,6 +30,9 @@ export type MemoryRecord = {
   generated_at: number
   usage_count: number
   last_usage: number | null
+  deleted_at: number | null
+  edited_by: string | null
+  edited_at: number | null
 }
 export type MemoryJob = { request_id: string; kind: string; data: unknown }
 export type MemoryConsolidation = {
@@ -280,6 +283,23 @@ export class EventsClient {
   }
   async listMemoryRecords(limit = 200): Promise<MemoryRecord[]> {
     return this.call("list_memory_records", { limit })
+  }
+  async getMemoryRecord(threadId: string): Promise<MemoryRecord | null> {
+    return this.call("get_memory_record", { thread_id: threadId })
+  }
+  async deleteMemoryRecord(threadId: string): Promise<ProposeResult> {
+    return this.call("delete_memory_record", { thread_id: threadId })
+  }
+  async patchMemoryRecord(
+    threadId: string,
+    patch: { rawMemory?: string; rolloutSummary?: string; rolloutSlug?: string },
+  ): Promise<ProposeResult> {
+    return this.call("patch_memory_record", {
+      thread_id: threadId,
+      ...(patch.rawMemory === undefined ? {} : { raw_memory: patch.rawMemory }),
+      ...(patch.rolloutSummary === undefined ? {} : { rollout_summary: patch.rolloutSummary }),
+      ...(patch.rolloutSlug === undefined ? {} : { rollout_slug: patch.rolloutSlug }),
+    })
   }
   async listMemoryConsolidations(limit = 200): Promise<MemoryConsolidation[]> {
     return this.call("list_memory_consolidations", { limit })

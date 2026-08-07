@@ -194,6 +194,10 @@ function readClient(client: FakeEventClient): Parameters<typeof createReadApi>[0
     statArtifact: async () => null,
     openRange: async () => new Uint8Array(),
     cancelTask: client.cancelTask.bind(client),
+    listMemoryRecords: async () => [],
+    getMemoryRecord: async () => null,
+    deleteMemoryRecord: async () => ({ seq: 1, hash: "h", duplicate: false }),
+    patchMemoryRecord: async () => ({ seq: 1, hash: "h", duplicate: false }),
   }
 }
 

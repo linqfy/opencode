@@ -42,6 +42,10 @@ type SchedulerClient = Pick<
   | "enqueueMemoryJob"
   | "claimMemoryJob"
   | "completeMemoryJob"
+  | "listMemoryRecords"
+  | "getMemoryRecord"
+  | "deleteMemoryRecord"
+  | "patchMemoryRecord"
 >
 
 export type MemoryJobClient = Pick<
@@ -51,7 +55,7 @@ export type MemoryJobClient = Pick<
 
 type ReadClient = Pick<
   SchedulerClient,
-  "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory" | "replay" | "statArtifact" | "openRange" | "cancelTask"
+  "queryTaskGraph" | "queryTaskDeliverables" | "listApprovalHistory" | "replay" | "statArtifact" | "openRange" | "cancelTask" | "listMemoryRecords" | "getMemoryRecord" | "deleteMemoryRecord" | "patchMemoryRecord"
 >
 
 export type ReadApi = {
@@ -68,6 +72,13 @@ export type ReadApi = {
     reason: string
     idempotencyKey: string
   }) => ReturnType<ReadClient["cancelTask"]>
+  readonly listMemoryRecords: (input: { limit?: number }) => ReturnType<ReadClient["listMemoryRecords"]>
+  readonly getMemoryRecord: (input: { threadId: string }) => ReturnType<ReadClient["getMemoryRecord"]>
+  readonly deleteMemoryRecord: (input: { threadId: string }) => ReturnType<ReadClient["deleteMemoryRecord"]>
+  readonly patchMemoryRecord: (input: {
+    threadId: string
+    patch: { rawMemory?: string; rolloutSummary?: string; rolloutSlug?: string }
+  }) => ReturnType<ReadClient["patchMemoryRecord"]>
 }
 
 type Runtime = {
@@ -108,6 +119,10 @@ export function createReadApi(client: ReadClient, adapter?: TaskSchedulerAdapter
       adapter
         ? Effect.runPromise(adapter.cancel({ rootId: input.rootId, taskId: input.taskId, reason: input.reason }))
         : client.cancelTask(input.rootId, input.taskId, input.workspaceDirectory, input.reason, input.idempotencyKey),
+    listMemoryRecords: (input) => client.listMemoryRecords(input.limit),
+    getMemoryRecord: (input) => client.getMemoryRecord(input.threadId),
+    deleteMemoryRecord: (input) => client.deleteMemoryRecord(input.threadId),
+    patchMemoryRecord: (input) => client.patchMemoryRecord(input.threadId, input.patch),
   }
 }
 

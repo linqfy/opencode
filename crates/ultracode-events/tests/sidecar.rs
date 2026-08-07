@@ -136,6 +136,67 @@ fn sidecar_state_survives_a_restart() {
 }
 
 #[test]
+fn memory_review_patch_and_delete_survive_a_restart() {
+    let dir = base("memory-review-durable");
+    let extract = |request_id: &str, thread_id: &str| {
+        json!({ "kind": "memory-extracted", "data": {
+            "request_id": request_id, "thread_id": thread_id, "source_updated_at": 1,
+            "raw_memory": "raw", "rollout_summary": "summary", "rollout_slug": null,
+            "cwd": "/repo", "git_branch": null, "generated_at": 2
+        }})
+    };
+
+    {
+        let mut sidecar = Sidecar::spawn(&dir);
+        for (request_id, thread_id) in [("req-a", "thread-a"), ("req-b", "thread-b")] {
+            let requested = json!({ "kind": "memory-extraction-requested", "data": {
+                "request_id": request_id, "source_session": "ses_1", "source_turn": 1,
+                "source_end_seq": 1, "transcript_artifact_id": "art-a", "extractor_version": "v1"
+            }});
+            assert!(sidecar.call(
+                1,
+                "propose_commit",
+                json!({ "key": format!("request-{request_id}"), "kind": requested })
+            )["error"]
+                .is_null());
+            assert!(sidecar.call(2, "claim_memory_job", json!({}))["result"]["request_id"]
+                .as_str()
+                .is_some());
+            assert!(sidecar.call(
+                3,
+                "propose_commit",
+                json!({ "key": format!("result-{request_id}"), "kind": extract(request_id, thread_id) })
+            )["error"]
+                .is_null());
+        }
+        let patched = sidecar.call(
+            4,
+            "patch_memory_record",
+            json!({ "thread_id": "thread-a", "rollout_summary": "reviewed" }),
+        );
+        assert!(patched["error"].is_null());
+        let deleted = sidecar.call(5, "delete_memory_record", json!({ "thread_id": "thread-b" }));
+        assert!(deleted["error"].is_null());
+        sidecar.kill();
+    }
+
+    {
+        let mut sidecar = Sidecar::spawn(&dir);
+        let a = sidecar.call(1, "get_memory_record", json!({ "thread_id": "thread-a" }));
+        assert_eq!(a["result"]["rollout_summary"], "reviewed");
+        assert_eq!(a["result"]["edited_by"], "user");
+        assert!(a["result"]["edited_at"].is_u64());
+        let b = sidecar.call(2, "get_memory_record", json!({ "thread_id": "thread-b" }));
+        assert!(b["result"].is_null(), "delete tombstone survives restart");
+        let listed = sidecar.call(3, "list_memory_records", json!({}));
+        assert_eq!(listed["result"].as_array().unwrap().len(), 1);
+        sidecar.kill();
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn task_roots_are_bound_to_their_workspace_across_rebuilds() {
     let dir = base("root-workspace");
     let root = json!({

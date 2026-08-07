@@ -107,6 +107,7 @@ import { PtyEnvironment } from "@opencode-ai/server/pty-environment"
 import { schemaErrorLayer as v2SchemaErrorLayer } from "@opencode-ai/server/middleware/schema-error"
 import { workspaceHandlers } from "./handlers/workspace"
 import { authorityHandlers } from "./handlers/authority"
+import { memoryHandlers } from "./handlers/memory"
 import { SchedulerService } from "@/agent/scheduler-service"
 import { MemoryService } from "@/memory/service"
 import { instanceContextLayer } from "./middleware/instance-context"
@@ -180,7 +181,7 @@ const instanceRoutes = instanceApiRoutes().pipe(
   Layer.provide([httpApiAuthLayer, workspaceRoutingLive, instanceContextLayer, schemaErrorLayer]),
 )
 const serverRoutes = HttpApiBuilder.layer(Api).pipe(
-  Layer.provide(handlers),
+  Layer.provide([handlers, memoryHandlers]),
   Layer.provide(PluginPtyEnvironment.layer),
   Layer.provide([serverHttpApiAuthLayer, v2SchemaErrorLayer]),
 )

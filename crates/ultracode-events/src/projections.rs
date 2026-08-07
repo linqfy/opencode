@@ -36,6 +36,9 @@ pub struct MemoryRecord {
     pub generated_at: u64,
     pub usage_count: u64,
     pub last_usage: Option<u64>,
+    pub deleted_at: Option<u64>,
+    pub edited_by: Option<String>,
+    pub edited_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -225,7 +228,8 @@ impl ProjectionStore {
                   source_updated_at INTEGER NOT NULL,
                   raw_memory TEXT NOT NULL, rollout_summary TEXT NOT NULL, rollout_slug TEXT,
                   cwd TEXT NOT NULL, git_branch TEXT, generated_at INTEGER NOT NULL,
-                  usage_count INTEGER NOT NULL DEFAULT 0, last_usage INTEGER
+                  usage_count INTEGER NOT NULL DEFAULT 0, last_usage INTEGER,
+                  deleted_at INTEGER, edited_by TEXT, edited_at INTEGER
               );
                CREATE TABLE IF NOT EXISTS memory_jobs (
                    request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL, failure_reason TEXT
@@ -327,6 +331,25 @@ impl ProjectionStore {
         };
         if !has_failure_reason {
             conn.execute("ALTER TABLE memory_jobs ADD COLUMN failure_reason TEXT", [])?;
+        }
+        let memory_record_columns = {
+            let mut statement = conn.prepare("PRAGMA table_info(memory_records)")?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            columns
+        };
+        for (column, definition) in [
+            ("deleted_at", "INTEGER"),
+            ("edited_by", "TEXT"),
+            ("edited_at", "INTEGER"),
+        ] {
+            if !memory_record_columns.iter().any(|existing| existing == column) {
+                conn.execute(
+                    &format!("ALTER TABLE memory_records ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
         }
         let mailbox_columns = {
             let mut statement = conn.prepare("PRAGMA table_info(mailbox_messages)")?;
@@ -473,6 +496,29 @@ impl ProjectionStore {
                         params![thread_id, at_ms],
                     )?;
                 }
+            }
+            EventKind::MemoryRecordPatched {
+                thread_id,
+                raw_memory,
+                rollout_summary,
+                rollout_slug,
+                edited_by,
+                edited_at,
+            } => {
+                self.conn.execute(
+                    "UPDATE memory_records SET raw_memory = COALESCE(?2, raw_memory),
+                     rollout_summary = COALESCE(?3, rollout_summary),
+                     rollout_slug = COALESCE(?4, rollout_slug),
+                     edited_by = ?5, edited_at = ?6
+                     WHERE thread_id = ?1 AND deleted_at IS NULL",
+                    params![thread_id, raw_memory, rollout_summary, rollout_slug, edited_by, edited_at],
+                )?;
+            }
+            EventKind::MemoryRecordDeleted { thread_id, deleted_at } => {
+                self.conn.execute(
+                    "UPDATE memory_records SET deleted_at = ?2 WHERE thread_id = ?1 AND deleted_at IS NULL",
+                    params![thread_id, deleted_at],
+                )?;
             }
             EventKind::TaskSpawned {
                 root_id,
@@ -718,28 +764,62 @@ impl ProjectionStore {
         Ok(count)
     }
 
+    const MEMORY_RECORD_COLUMNS: &str = "thread_id, source_session, source_turn, source_end_seq, transcript_artifact_id, extractor_version, source_updated_at, raw_memory, rollout_summary, rollout_slug, cwd, git_branch, generated_at, usage_count, last_usage, deleted_at, edited_by, edited_at";
+
+    fn memory_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRecord> {
+        Ok(MemoryRecord {
+            thread_id: row.get(0)?,
+            source_session: row.get(1)?,
+            source_turn: row.get(2)?,
+            source_end_seq: row.get(3)?,
+            transcript_artifact_id: row.get(4)?,
+            extractor_version: row.get(5)?,
+            source_updated_at: row.get(6)?,
+            raw_memory: row.get(7)?,
+            rollout_summary: row.get(8)?,
+            rollout_slug: row.get(9)?,
+            cwd: row.get(10)?,
+            git_branch: row.get(11)?,
+            generated_at: row.get(12)?,
+            usage_count: row.get(13)?,
+            last_usage: row.get(14)?,
+            deleted_at: row.get(15)?,
+            edited_by: row.get(16)?,
+            edited_at: row.get(17)?,
+        })
+    }
+
     pub fn list_memory_records(&self, limit: u64) -> Result<Vec<MemoryRecord>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare("SELECT thread_id, source_session, source_turn, source_end_seq, transcript_artifact_id, extractor_version, source_updated_at, raw_memory, rollout_summary, rollout_slug, cwd, git_branch, generated_at, usage_count, last_usage FROM memory_records ORDER BY usage_count DESC, last_usage DESC, source_updated_at DESC, thread_id ASC LIMIT ?1")?;
-        let rows = stmt.query_map(params![limit.min(200)], |row| {
-            Ok(MemoryRecord {
-                thread_id: row.get(0)?,
-                source_session: row.get(1)?,
-                source_turn: row.get(2)?,
-                source_end_seq: row.get(3)?,
-                transcript_artifact_id: row.get(4)?,
-                extractor_version: row.get(5)?,
-                source_updated_at: row.get(6)?,
-                raw_memory: row.get(7)?,
-                rollout_summary: row.get(8)?,
-                rollout_slug: row.get(9)?,
-                cwd: row.get(10)?,
-                git_branch: row.get(11)?,
-                generated_at: row.get(12)?,
-                usage_count: row.get(13)?,
-                last_usage: row.get(14)?,
-            })
-        })?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {} FROM memory_records WHERE deleted_at IS NULL ORDER BY usage_count DESC, last_usage DESC, source_updated_at DESC, thread_id ASC LIMIT ?1",
+            Self::MEMORY_RECORD_COLUMNS
+        ))?;
+        let rows = stmt.query_map(params![limit.min(200)], Self::memory_record_from_row)?;
         rows.collect()
+    }
+
+    pub fn get_memory_record(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<MemoryRecord>, rusqlite::Error> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {} FROM memory_records WHERE thread_id = ?1 AND deleted_at IS NULL",
+                    Self::MEMORY_RECORD_COLUMNS
+                ),
+                params![thread_id],
+                Self::memory_record_from_row,
+            )
+            .optional()
+    }
+
+    pub fn memory_record_exists(&self, thread_id: &str) -> Result<bool, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memory_records WHERE thread_id = ?1 AND deleted_at IS NULL)",
+            params![thread_id],
+            |row| row.get(0),
+        )
     }
 
     pub fn list_memory_consolidations(
@@ -1677,6 +1757,94 @@ mod tests {
             .unwrap();
         store.index_record(&result).unwrap();
         assert_eq!(store.claim_memory_job().unwrap(), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn memory_delete_tombstones_and_excludes_rows_live_and_after_rebuild() {
+        let base = dir("memory-delete");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut store = ProjectionStore::open(&base.join("proj.db")).unwrap();
+        let mut journal = JournalWriter::create(&base.join("journal"), "ses_1").unwrap();
+        for kind in [
+            memory_requested("req-thread-d-1"),
+            memory_extracted("thread-d", 1, "raw"),
+            memory_requested("req-thread-e-1"),
+            memory_extracted("thread-e", 1, "raw-e"),
+        ] {
+            let record = journal.append(kind, None).unwrap();
+            store.index_record(&record).unwrap();
+        }
+        let deleted = journal
+            .append(
+                EventKind::MemoryRecordDeleted {
+                    thread_id: "thread-d".into(),
+                    deleted_at: 100,
+                },
+                None,
+            )
+            .unwrap();
+        store.index_record(&deleted).unwrap();
+        let live = store.list_memory_records(200).unwrap();
+        assert_eq!(
+            live.iter().map(|record| record.thread_id.as_str()).collect::<Vec<_>>(),
+            vec!["thread-e"]
+        );
+        store.rebuild(&base.join("journal"), "ses_1").unwrap();
+        let rebuilt = store.list_memory_records(200).unwrap();
+        assert_eq!(rebuilt, live, "delete tombstone survives journal replay");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn memory_patch_records_user_provenance_and_rebuild_replays_it() {
+        let base = dir("memory-patch");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mut store = ProjectionStore::open(&base.join("proj.db")).unwrap();
+        let mut journal = JournalWriter::create(&base.join("journal"), "ses_1").unwrap();
+        for kind in [
+            memory_requested("req-thread-d-1"),
+            memory_extracted("thread-d", 1, "raw"),
+        ] {
+            let record = journal.append(kind, None).unwrap();
+            store.index_record(&record).unwrap();
+        }
+        let patched = journal
+            .append(
+                EventKind::MemoryRecordPatched {
+                    thread_id: "thread-d".into(),
+                    raw_memory: Some("edited".into()),
+                    rollout_summary: None,
+                    rollout_slug: None,
+                    edited_by: "user".into(),
+                    edited_at: 200,
+                },
+                None,
+            )
+            .unwrap();
+        store.index_record(&patched).unwrap();
+        let record = store
+            .list_memory_records(200)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.thread_id == "thread-d")
+            .unwrap();
+        assert_eq!(record.raw_memory, "edited");
+        assert_eq!(record.rollout_summary, "summary-raw", "untouched fields survive");
+        assert_eq!(record.edited_by.as_deref(), Some("user"));
+        assert_eq!(record.edited_at, Some(200));
+        store.rebuild(&base.join("journal"), "ses_1").unwrap();
+        let rebuilt = store
+            .list_memory_records(200)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.thread_id == "thread-d")
+            .unwrap();
+        assert_eq!(rebuilt.raw_memory, "edited");
+        assert_eq!(rebuilt.edited_by.as_deref(), Some("user"));
+        assert_eq!(rebuilt.edited_at, Some(200));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

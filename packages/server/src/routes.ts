@@ -17,6 +17,7 @@ import { Layer, Option } from "effect"
 import { Api } from "./api"
 import { ServerAuth } from "./auth"
 import { handlers } from "./handlers"
+import { MemoryHandler } from "./handlers/memory"
 import { authorizationLayer } from "./middleware/authorization"
 import { schemaErrorLayer } from "./middleware/schema-error"
 import { PtyEnvironment } from "./pty-environment"
@@ -52,7 +53,10 @@ function makeRoutes<AuthError, AuthServices>(auth: Layer.Layer<ServerAuth.Config
   const serviceLayer = AppNodeBuilder.build(applicationServices, [[SessionExecution.node, SessionExecutionLocal.node]])
 
   return HttpApiBuilder.layer(Api, { openapiPath: "/openapi.json" }).pipe(
-    Layer.provide(handlers),
+    // MemoryHandler lives outside the shared `handlers` aggregate because the
+    // real memory review handler is wired by opencode (where the sidecar lives);
+    // the standalone server fails memory routes closed as disabled.
+    Layer.provide([handlers, MemoryHandler]),
     Layer.provide(sessionLocationLayer),
     Layer.provide(locationLayer),
     Layer.provide(authorizationLayer),

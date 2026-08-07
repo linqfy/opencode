@@ -109,3 +109,18 @@ export class PtyNotFoundError extends Schema.TaggedErrorClass<PtyNotFoundError>(
   },
   { httpApiStatus: 404 },
 ) {}
+
+export class MemoryNotFoundError extends Schema.TaggedErrorClass<MemoryNotFoundError>()(
+  "MemoryNotFoundError",
+  {
+    threadID: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 404 },
+) {}
+
+export class MemoryDisabledError extends Schema.TaggedErrorClass<MemoryDisabledError>()(
+  "MemoryDisabledError",
+  { message: Schema.String },
+  { httpApiStatus: 409 },
+) {}

@@ -36,6 +36,10 @@ describe("SchedulerService", () => {
       statArtifact: async () => null,
       openRange: async () => new Uint8Array(),
       cancelTask: async () => ({ state: "cancellation_pending" as const }),
+      listMemoryRecords: async () => [],
+      getMemoryRecord: async () => null,
+      deleteMemoryRecord: async () => ({ seq: 1, hash: "h", duplicate: false }),
+      patchMemoryRecord: async () => ({ seq: 1, hash: "h", duplicate: false }),
     })
     await expect(api.taskGraph({ rootId: "root", workspaceDirectory: "C:\\workspace" })).resolves.toEqual({
       tasks: [], edges: [], next_cursor: null,

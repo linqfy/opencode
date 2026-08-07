@@ -9,6 +9,7 @@ import { makePermissionGroup } from "./groups/permission"
 import { FileSystemGroup } from "./groups/fs"
 import { CommandGroup } from "./groups/command"
 import { SkillGroup } from "./groups/skill"
+import { MemoryGroup } from "./groups/memory"
 import { EventGroup, makeEventGroup } from "./groups/event"
 import type { Definition } from "@opencode-ai/schema/event"
 import { AgentGroup } from "./groups/agent"
@@ -52,6 +53,7 @@ const makeApiFromGroup = <
     .add(PtyGroup.middleware(locationMiddleware))
     .add(makeQuestionGroup(locationMiddleware, sessionLocationMiddleware))
     .add(ReferenceGroup.middleware(locationMiddleware))
+    .add(MemoryGroup.middleware(locationMiddleware))
     .add(ProjectCopyGroup.middleware(locationMiddleware))
     .annotateMerge(
       OpenApi.annotations({

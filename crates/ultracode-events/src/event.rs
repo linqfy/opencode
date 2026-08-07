@@ -183,6 +183,22 @@ pub enum EventKind {
         thread_ids: Vec<String>,
         at_ms: u64,
     },
+    /// A user-issued memory review edit. `edited_by` records the origin
+    /// ("user") and `edited_at` the wall-clock timestamp of the patch.
+    MemoryRecordPatched {
+        thread_id: String,
+        raw_memory: Option<String>,
+        rollout_summary: Option<String>,
+        rollout_slug: Option<String>,
+        edited_by: String,
+        edited_at: u64,
+    },
+    /// A user-issued memory deletion; `deleted_at` tombstones the record so
+    /// journal replay can rebuild the same exclusion.
+    MemoryRecordDeleted {
+        thread_id: String,
+        deleted_at: u64,
+    },
     TaskSpawned {
         root_id: String,
         task_id: String,
@@ -526,6 +542,21 @@ mod tests {
             serde_json::json!({
                 "kind": "memory-usage-recorded",
                 "data": { "thread_ids": ["thread_1"], "at_ms": 103 }
+            }),
+            serde_json::json!({
+                "kind": "memory-record-patched",
+                "data": {
+                    "thread_id": "thread_1",
+                    "raw_memory": "edited",
+                    "rollout_summary": null,
+                    "rollout_slug": null,
+                    "edited_by": "user",
+                    "edited_at": 200
+                }
+            }),
+            serde_json::json!({
+                "kind": "memory-record-deleted",
+                "data": { "thread_id": "thread_1", "deleted_at": 300 }
             }),
         ];
 

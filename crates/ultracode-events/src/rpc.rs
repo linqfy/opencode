@@ -517,6 +517,104 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
             Some(job) => serde_json::to_value(job).map_err(|e| e.to_string()),
         },
 
+        "get_memory_record" => {
+            let thread_id = req
+                .params
+                .get("thread_id")
+                .and_then(Value::as_str)
+                .ok_or("missing thread_id")?;
+            let record = state
+                .projections
+                .get_memory_record(thread_id)
+                .map_err(|e| e.to_string())?;
+            match record {
+                None => Ok(Value::Null),
+                Some(record) => serde_json::to_value(record).map_err(|e| e.to_string()),
+            }
+        }
+
+        "delete_memory_record" => {
+            let thread_id = req
+                .params
+                .get("thread_id")
+                .and_then(Value::as_str)
+                .ok_or("missing thread_id")?;
+            let key = format!("memory-record-deleted:{thread_id}");
+            if let Some(record) = state.commit.record_for_key(&key) {
+                return Ok(json!({ "seq": record.event.seq, "hash": record.hash, "duplicate": true }));
+            }
+            if !state
+                .projections
+                .memory_record_exists(thread_id)
+                .map_err(|e| e.to_string())?
+            {
+                return Err(format!("memory record not found: {thread_id}"));
+            }
+            propose_memory_mutation(
+                state,
+                key,
+                EventKind::MemoryRecordDeleted {
+                    thread_id: thread_id.into(),
+                    deleted_at: crate::event::now_ms(),
+                },
+            )
+        }
+
+        "patch_memory_record" => {
+            let thread_id = req
+                .params
+                .get("thread_id")
+                .and_then(Value::as_str)
+                .ok_or("missing thread_id")?;
+            let raw_memory = req.params.get("raw_memory").map(|value| {
+                value
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| "bad raw_memory".to_string())
+            });
+            let rollout_summary = req.params.get("rollout_summary").map(|value| {
+                value
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| "bad rollout_summary".to_string())
+            });
+            let rollout_slug = req.params.get("rollout_slug").map(|value| {
+                value
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| "bad rollout_slug".to_string())
+            });
+            let raw_memory = raw_memory.transpose()?;
+            let rollout_summary = rollout_summary.transpose()?;
+            let rollout_slug = rollout_slug.transpose()?;
+            if raw_memory.is_none() && rollout_summary.is_none() && rollout_slug.is_none() {
+                return Err("memory record patch has nothing to patch".into());
+            }
+            if !state
+                .projections
+                .memory_record_exists(thread_id)
+                .map_err(|e| e.to_string())?
+            {
+                return Err(format!("memory record not found: {thread_id}"));
+            }
+            let key = format!(
+                "memory-record-patched:{thread_id}:{}",
+                crate::event::now_ms()
+            );
+            propose_memory_mutation(
+                state,
+                key,
+                EventKind::MemoryRecordPatched {
+                    thread_id: thread_id.into(),
+                    raw_memory,
+                    rollout_summary,
+                    rollout_slug,
+                    edited_by: "user".into(),
+                    edited_at: crate::event::now_ms(),
+                },
+            )
+        }
+
         "put_artifact" => {
             let bytes_hex = req
                 .params
@@ -645,6 +743,30 @@ fn dispatch(state: &mut SidecarState, req: &Request) -> Result<Value, String> {
 
         other => Err(format!("unknown method: {other}")),
     }
+}
+
+/// Appends a journal-backed memory review mutation and indexes it. Idempotent
+/// on the key; retries return the original commit flagged as a duplicate.
+fn propose_memory_mutation(
+    state: &mut SidecarState,
+    key: String,
+    kind: EventKind,
+) -> Result<Value, String> {
+    if let Some(record) = state.commit.record_for_key(&key) {
+        return Ok(json!({ "seq": record.event.seq, "hash": record.hash, "duplicate": true }));
+    }
+    let outcome = state.commit.propose(&key, kind).map_err(|e| e.to_string())?;
+    let (record, duplicate) = match outcome {
+        CommitOutcome::Committed(r) => (r, false),
+        CommitOutcome::Duplicate(r) => (r, true),
+    };
+    if !duplicate {
+        state
+            .projections
+            .index_record(&record)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(json!({ "seq": record.event.seq, "hash": record.hash, "duplicate": duplicate }))
 }
 
 #[derive(Default)]
@@ -1718,6 +1840,54 @@ mod tests {
         .result
         .unwrap();
         assert_eq!(limited.as_array().unwrap().len(), 200);
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn memory_record_review_mutations_are_journal_backed_and_survive_rebuild() {
+        let (journal, db, blobs) = dirs("memory-review");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let requested = json!({ "kind": "memory-extraction-requested", "data": {
+            "request_id": "req-a", "source_session": "ses_1", "source_turn": 1,
+            "source_end_seq": 1, "transcript_artifact_id": "art-a", "extractor_version": "v1"
+        }});
+        assert!(handle_request(&mut state, &req(1, "propose_commit", json!({ "key": "request", "kind": requested }))).error.is_none());
+        let claimed = handle_request(&mut state, &req(2, "claim_memory_job", json!({})));
+        assert_eq!(claimed.result.unwrap()["request_id"], "req-a");
+        let extracted = json!({ "kind": "memory-extracted", "data": {
+            "request_id": "req-a", "thread_id": "thread-a", "source_updated_at": 1,
+            "raw_memory": "raw", "rollout_summary": "summary", "rollout_slug": null,
+            "cwd": "/repo", "git_branch": null, "generated_at": 2
+        }});
+        assert!(handle_request(&mut state, &req(3, "propose_commit", json!({ "key": "result", "kind": extracted }))).error.is_none());
+
+        let patched = handle_request(&mut state, &req(4, "patch_memory_record", json!({
+            "thread_id": "thread-a", "raw_memory": "edited"
+        })));
+        assert!(patched.error.is_none(), "{patched:?}");
+        let record = handle_request(&mut state, &req(5, "get_memory_record", json!({ "thread_id": "thread-a" }))).result.unwrap();
+        assert_eq!(record["raw_memory"], "edited");
+        assert_eq!(record["rollout_summary"], "summary");
+        assert_eq!(record["edited_by"], "user");
+        assert!(record["edited_at"].as_u64().unwrap() > 0);
+
+        let empty_patch = handle_request(&mut state, &req(6, "patch_memory_record", json!({ "thread_id": "thread-a" })));
+        assert!(empty_patch.error.unwrap().contains("nothing to patch"));
+
+        let deleted = handle_request(&mut state, &req(7, "delete_memory_record", json!({ "thread_id": "thread-a" })));
+        assert!(deleted.error.is_none(), "{deleted:?}");
+        assert!(handle_request(&mut state, &req(8, "get_memory_record", json!({ "thread_id": "thread-a" }))).result.unwrap().is_null());
+        let listed = handle_request(&mut state, &req(9, "list_memory_records", json!({}))).result.unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 0);
+
+        let unknown_delete = handle_request(&mut state, &req(10, "delete_memory_record", json!({ "thread_id": "missing" })));
+        assert!(unknown_delete.error.unwrap().contains("not found"));
+        let unknown_patch = handle_request(&mut state, &req(11, "patch_memory_record", json!({ "thread_id": "missing", "raw_memory": "x" })));
+        assert!(unknown_patch.error.unwrap().contains("not found"));
+
+        state.projections.rebuild(&journal, "ses_1").unwrap();
+        assert!(handle_request(&mut state, &req(12, "get_memory_record", json!({ "thread_id": "thread-a" }))).result.unwrap().is_null());
+        assert_eq!(handle_request(&mut state, &req(13, "list_memory_records", json!({}))).result.unwrap().as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
 
