@@ -4,6 +4,7 @@ import { createHash } from "node:crypto"
 import { Context, Effect, Layer, Schema } from "effect"
 import { InMemoryMemoryStore, memoryAge, rankForConsolidation, type MemoryRecord, type MemoryStore } from "@ultracode/memory"
 import { makeLocationNode } from "../effect/app-node"
+import { Config } from "../config"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
 import { InstructionContext } from "../instruction-context"
@@ -97,6 +98,11 @@ const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const store = yield* MemoryStoreService
     const registry = yield* SystemContextRegistry.Service
+    const config = yield* Config.Service
+    const memoryEnabled = (yield* config.entries()).some(
+      (entry) => entry.type === "document" && entry.info.memory?.enabled === true,
+    )
+    if (!memoryEnabled) return
     yield* registry.register({ key, load: observe(store) })
   }),
 )
@@ -104,5 +110,13 @@ const layer = Layer.effectDiscard(
 export const node = makeLocationNode({
   name: "system-context-memory",
   layer,
-  deps: [memoryStoreNode, Location.node, SystemContextRegistry.node, InstructionContext.node, FSUtil.node, Global.node],
+  deps: [
+    memoryStoreNode,
+    Config.node,
+    Location.node,
+    SystemContextRegistry.node,
+    InstructionContext.node,
+    FSUtil.node,
+    Global.node,
+  ],
 })

@@ -3,6 +3,8 @@ import { Effect, Layer } from "effect"
 import { InMemoryMemoryStore, type MemoryRecord, type MemoryStore } from "@ultracode/memory"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Config } from "@opencode-ai/core/config"
+import { ConfigMemory } from "@opencode-ai/core/config/memory"
 import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -62,6 +64,19 @@ const locationLayer = Layer.succeed(
   ),
 )
 
+const config = Layer.succeed(
+  Config.Service,
+  Config.Service.of({
+    entries: () =>
+      Effect.succeed([
+        new Config.Document({
+          type: "document",
+          info: new Config.Info({ memory: new ConfigMemory.Info({ enabled: true }) }),
+        }),
+      ]),
+  }),
+)
+
 const memoryNode = LayerNode.group([MemorySource.node, SystemContextRegistry.node])
 
 const makeIt = (store: MemoryStore) =>
@@ -69,6 +84,7 @@ const makeIt = (store: MemoryStore) =>
     AppNodeBuilder.build(memoryNode, [
       [Location.node, locationLayer],
       [Global.node, Global.layerWith({ config: "/global" })],
+      [Config.node, config],
       [
         MemorySource.memoryStoreNode,
         Layer.succeed(MemorySource.MemoryStoreService, MemorySource.MemoryStoreService.of(store)),
