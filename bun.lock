@@ -628,6 +628,7 @@
         "@ultracode/agents": "workspace:*",
         "@ultracode/context": "workspace:*",
         "@ultracode/events-client": "workspace:*",
+        "@ultracode/memory": "workspace:*",
         "@ultracode/schema": "workspace:*",
         "@zip.js/zip.js": "2.7.62",
         "ai": "catalog:",

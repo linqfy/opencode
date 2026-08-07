@@ -108,6 +108,7 @@ import { schemaErrorLayer as v2SchemaErrorLayer } from "@opencode-ai/server/midd
 import { workspaceHandlers } from "./handlers/workspace"
 import { authorityHandlers } from "./handlers/authority"
 import { SchedulerService } from "@/agent/scheduler-service"
+import { MemoryService } from "@/memory/service"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
 import { disposeMiddleware } from "./lifecycle"
@@ -271,6 +272,7 @@ const app = LayerNode.group([
   ProjectCopy.node,
   PtyTicket.node,
   SchedulerService.node,
+  MemoryService.node,
 ])
 
 export function createRoutes(
