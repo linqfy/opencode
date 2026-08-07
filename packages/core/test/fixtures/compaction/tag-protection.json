@@ -1,0 +1,40 @@
+{
+  "conversation": [
+    { "id": "u1", "role": "user", "parts": [], "tokens": 1 },
+    {
+      "id": "a1",
+      "role": "assistant",
+      "tokens": 420,
+      "parts": [
+        { "id": "tag-u", "kind": "tool_result", "text": "user authored output survives verbatim", "tokens": 60, "toolName": "read", "userAuthored": true },
+        { "id": "tag-p", "kind": "tool_result", "text": "permission constraint output survives verbatim", "tokens": 60, "toolName": "read", "permissionOrConstraint": true },
+        { "id": "tag-i", "kind": "tool_result", "text": "invoked skill output survives verbatim", "tokens": 60, "toolName": "read", "invokedSkill": true },
+        { "id": "tag-c", "kind": "tool_result", "text": "current task output survives verbatim", "tokens": 60, "toolName": "read", "currentTask": true },
+        { "id": "tag-f", "kind": "tool_result", "text": "active failure output survives verbatim", "tokens": 60, "toolName": "read", "activeFailure": true },
+        { "id": "plain-1", "kind": "tool_result", "text": "old untagged output gets cleared", "tokens": 60, "toolName": "read" },
+        { "id": "plain-2", "kind": "tool_result", "text": "second old untagged output cleared", "tokens": 60, "toolName": "read" }
+      ]
+    },
+    { "id": "u2", "role": "user", "parts": [], "tokens": 1 },
+    {
+      "id": "a2",
+      "role": "assistant",
+      "tokens": 180,
+      "parts": [
+        { "id": "t1", "kind": "tool_result", "text": "recent result one", "tokens": 60, "toolName": "read" },
+        { "id": "t2", "kind": "tool_result", "text": "recent result two", "tokens": 60, "toolName": "read" },
+        { "id": "t3", "kind": "tool_result", "text": "recent result three", "tokens": 60, "toolName": "read" }
+      ]
+    },
+    { "id": "u3", "role": "user", "parts": [], "tokens": 1 },
+    {
+      "id": "a3",
+      "role": "assistant",
+      "tokens": 120,
+      "parts": [
+        { "id": "t4", "kind": "tool_result", "text": "recent result four", "tokens": 60, "toolName": "read" },
+        { "id": "t5", "kind": "tool_result", "text": "recent result five", "tokens": 60, "toolName": "read" }
+      ]
+    }
+  ]
+}

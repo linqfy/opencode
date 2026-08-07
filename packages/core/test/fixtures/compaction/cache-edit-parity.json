@@ -1,0 +1,125 @@
+{
+  "tokens": 20000,
+  "summary": "## Objective\nCache-edit parity holds.",
+  "entries": [
+    {
+      "seq": 1,
+      "message": {
+        "type": "compaction",
+        "id": "msg_prev",
+        "reason": "auto",
+        "summary": "Previous summary",
+        "recent": "Previous recent",
+        "time": 0
+      }
+    },
+    { "seq": 2, "message": { "type": "user", "id": "msg_u1", "text": "Explore the workspace", "time": 0 } },
+    {
+      "seq": 3,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a1",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r1", "name": "bash", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "listing" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 4, "message": { "type": "user", "id": "msg_u2", "text": "Read the README", "time": 0 } },
+    {
+      "seq": 5,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a2",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r2", "name": "read", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "readme" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 6, "message": { "type": "user", "id": "msg_u3", "text": "Grep for the entrypoint", "time": 0 } },
+    {
+      "seq": 7,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a3",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r3", "name": "grep", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "entrypoint found" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 8, "message": { "type": "user", "id": "msg_u4", "text": "Run the build", "time": 0 } },
+    {
+      "seq": 9,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a4",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r4", "name": "bash", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "build ok" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 10, "message": { "type": "user", "id": "msg_u5", "text": "Run the tests", "time": 0 } },
+    {
+      "seq": 11,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a5",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r5", "name": "read", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "tests green" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 12, "message": { "type": "user", "id": "msg_u6", "text": "Stage the changes", "time": 0 } },
+    {
+      "seq": 13,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a6",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r6", "name": "bash", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "staged" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 14, "message": { "type": "user", "id": "msg_u7", "text": "Commit", "time": 0 } },
+    {
+      "seq": 15,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a7",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r7", "name": "bash", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "committed" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 16, "message": { "type": "user", "id": "msg_u8", "text": "Push to origin", "time": 0 } },
+    {
+      "seq": 17,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a8",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "tool", "id": "p_r8", "name": "bash", "state": { "status": "completed", "input": {}, "content": [{ "type": "text", "text": "pushed" }], "structured": {} }, "time": { "created": 0, "completed": 0 } }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    },
+    { "seq": 18, "message": { "type": "user", "id": "msg_u9", "text": "Wrap up", "time": 0 } },
+    {
+      "seq": 19,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a9",
+        "agent": "build",
+        "model": { "id": "test-model", "providerID": "openai" },
+        "content": [{ "type": "text", "id": "p_t1", "text": "All done" }],
+        "time": { "created": 0, "completed": 0 }
+      }
+    }
+  ]
+}

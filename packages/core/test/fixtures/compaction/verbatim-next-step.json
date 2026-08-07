@@ -1,0 +1,1937 @@
+{
+  "tokens": 4000,
+  "summary": "## Objective\nContinue the build.\nNext, run `bun test`\n",
+  "entries": [
+    {
+      "seq": 1,
+      "message": {
+        "type": "compaction",
+        "id": "msg_prev",
+        "reason": "auto",
+        "summary": "Previous summary",
+        "recent": "",
+        "time": 0
+      }
+    },
+    {
+      "seq": 2,
+      "message": {
+        "type": "user",
+        "id": "msg_u0",
+        "text": "Next, run `bun test`",
+        "time": 0
+      }
+    },
+    {
+      "seq": 3,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a0",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t0",
+            "text": "Understood."
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "message": {
+        "type": "user",
+        "id": "msg_u1",
+        "text": "task 1 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 5,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a1",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t1",
+            "text": "did task 1 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "message": {
+        "type": "user",
+        "id": "msg_u2",
+        "text": "task 2 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 7,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a2",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t2",
+            "text": "did task 2 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "message": {
+        "type": "user",
+        "id": "msg_u3",
+        "text": "task 3 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 9,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a3",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t3",
+            "text": "did task 3 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 10,
+      "message": {
+        "type": "user",
+        "id": "msg_u4",
+        "text": "task 4 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 11,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a4",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t4",
+            "text": "did task 4 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "message": {
+        "type": "user",
+        "id": "msg_u5",
+        "text": "task 5 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 13,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a5",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t5",
+            "text": "did task 5 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "message": {
+        "type": "user",
+        "id": "msg_u6",
+        "text": "task 6 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 15,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a6",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t6",
+            "text": "did task 6 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "message": {
+        "type": "user",
+        "id": "msg_u7",
+        "text": "task 7 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 17,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a7",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t7",
+            "text": "did task 7 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 18,
+      "message": {
+        "type": "user",
+        "id": "msg_u8",
+        "text": "task 8 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 19,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a8",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t8",
+            "text": "did task 8 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 20,
+      "message": {
+        "type": "user",
+        "id": "msg_u9",
+        "text": "task 9 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 21,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a9",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t9",
+            "text": "did task 9 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 22,
+      "message": {
+        "type": "user",
+        "id": "msg_u10",
+        "text": "task 10 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 23,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a10",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t10",
+            "text": "did task 10 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 24,
+      "message": {
+        "type": "user",
+        "id": "msg_u11",
+        "text": "task 11 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 25,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a11",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t11",
+            "text": "did task 11 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 26,
+      "message": {
+        "type": "user",
+        "id": "msg_u12",
+        "text": "task 12 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 27,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a12",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t12",
+            "text": "did task 12 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 28,
+      "message": {
+        "type": "user",
+        "id": "msg_u13",
+        "text": "task 13 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 29,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a13",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t13",
+            "text": "did task 13 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "message": {
+        "type": "user",
+        "id": "msg_u14",
+        "text": "task 14 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 31,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a14",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t14",
+            "text": "did task 14 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 32,
+      "message": {
+        "type": "user",
+        "id": "msg_u15",
+        "text": "task 15 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 33,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a15",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t15",
+            "text": "did task 15 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "message": {
+        "type": "user",
+        "id": "msg_u16",
+        "text": "task 16 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 35,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a16",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t16",
+            "text": "did task 16 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 36,
+      "message": {
+        "type": "user",
+        "id": "msg_u17",
+        "text": "task 17 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 37,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a17",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t17",
+            "text": "did task 17 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 38,
+      "message": {
+        "type": "user",
+        "id": "msg_u18",
+        "text": "task 18 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 39,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a18",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t18",
+            "text": "did task 18 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 40,
+      "message": {
+        "type": "user",
+        "id": "msg_u19",
+        "text": "task 19 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 41,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a19",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t19",
+            "text": "did task 19 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 42,
+      "message": {
+        "type": "user",
+        "id": "msg_u20",
+        "text": "task 20 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 43,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a20",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t20",
+            "text": "did task 20 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 44,
+      "message": {
+        "type": "user",
+        "id": "msg_u21",
+        "text": "task 21 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 45,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a21",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t21",
+            "text": "did task 21 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 46,
+      "message": {
+        "type": "user",
+        "id": "msg_u22",
+        "text": "task 22 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 47,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a22",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t22",
+            "text": "did task 22 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 48,
+      "message": {
+        "type": "user",
+        "id": "msg_u23",
+        "text": "task 23 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 49,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a23",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t23",
+            "text": "did task 23 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 50,
+      "message": {
+        "type": "user",
+        "id": "msg_u24",
+        "text": "task 24 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 51,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a24",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t24",
+            "text": "did task 24 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 52,
+      "message": {
+        "type": "user",
+        "id": "msg_u25",
+        "text": "task 25 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 53,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a25",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t25",
+            "text": "did task 25 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 54,
+      "message": {
+        "type": "user",
+        "id": "msg_u26",
+        "text": "task 26 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 55,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a26",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t26",
+            "text": "did task 26 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 56,
+      "message": {
+        "type": "user",
+        "id": "msg_u27",
+        "text": "task 27 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 57,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a27",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t27",
+            "text": "did task 27 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 58,
+      "message": {
+        "type": "user",
+        "id": "msg_u28",
+        "text": "task 28 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 59,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a28",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t28",
+            "text": "did task 28 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 60,
+      "message": {
+        "type": "user",
+        "id": "msg_u29",
+        "text": "task 29 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 61,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a29",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t29",
+            "text": "did task 29 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 62,
+      "message": {
+        "type": "user",
+        "id": "msg_u30",
+        "text": "task 30 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 63,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a30",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t30",
+            "text": "did task 30 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 64,
+      "message": {
+        "type": "user",
+        "id": "msg_u31",
+        "text": "task 31 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 65,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a31",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t31",
+            "text": "did task 31 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 66,
+      "message": {
+        "type": "user",
+        "id": "msg_u32",
+        "text": "task 32 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 67,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a32",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t32",
+            "text": "did task 32 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 68,
+      "message": {
+        "type": "user",
+        "id": "msg_u33",
+        "text": "task 33 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 69,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a33",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t33",
+            "text": "did task 33 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 70,
+      "message": {
+        "type": "user",
+        "id": "msg_u34",
+        "text": "task 34 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 71,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a34",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t34",
+            "text": "did task 34 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 72,
+      "message": {
+        "type": "user",
+        "id": "msg_u35",
+        "text": "task 35 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 73,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a35",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t35",
+            "text": "did task 35 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 74,
+      "message": {
+        "type": "user",
+        "id": "msg_u36",
+        "text": "task 36 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 75,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a36",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t36",
+            "text": "did task 36 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 76,
+      "message": {
+        "type": "user",
+        "id": "msg_u37",
+        "text": "task 37 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 77,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a37",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t37",
+            "text": "did task 37 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 78,
+      "message": {
+        "type": "user",
+        "id": "msg_u38",
+        "text": "task 38 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 79,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a38",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t38",
+            "text": "did task 38 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 80,
+      "message": {
+        "type": "user",
+        "id": "msg_u39",
+        "text": "task 39 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 81,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a39",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t39",
+            "text": "did task 39 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 82,
+      "message": {
+        "type": "user",
+        "id": "msg_u40",
+        "text": "task 40 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 83,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a40",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t40",
+            "text": "did task 40 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 84,
+      "message": {
+        "type": "user",
+        "id": "msg_u41",
+        "text": "task 41 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 85,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a41",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t41",
+            "text": "did task 41 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 86,
+      "message": {
+        "type": "user",
+        "id": "msg_u42",
+        "text": "task 42 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 87,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a42",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t42",
+            "text": "did task 42 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 88,
+      "message": {
+        "type": "user",
+        "id": "msg_u43",
+        "text": "task 43 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 89,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a43",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t43",
+            "text": "did task 43 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 90,
+      "message": {
+        "type": "user",
+        "id": "msg_u44",
+        "text": "task 44 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 91,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a44",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t44",
+            "text": "did task 44 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 92,
+      "message": {
+        "type": "user",
+        "id": "msg_u45",
+        "text": "task 45 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 93,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a45",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t45",
+            "text": "did task 45 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 94,
+      "message": {
+        "type": "user",
+        "id": "msg_u46",
+        "text": "task 46 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 95,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a46",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t46",
+            "text": "did task 46 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 96,
+      "message": {
+        "type": "user",
+        "id": "msg_u47",
+        "text": "task 47 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 97,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a47",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t47",
+            "text": "did task 47 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 98,
+      "message": {
+        "type": "user",
+        "id": "msg_u48",
+        "text": "task 48 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 99,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a48",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t48",
+            "text": "did task 48 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 100,
+      "message": {
+        "type": "user",
+        "id": "msg_u49",
+        "text": "task 49 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 101,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a49",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t49",
+            "text": "did task 49 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 102,
+      "message": {
+        "type": "user",
+        "id": "msg_u50",
+        "text": "task 50 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 103,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a50",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t50",
+            "text": "did task 50 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 104,
+      "message": {
+        "type": "user",
+        "id": "msg_u51",
+        "text": "task 51 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 105,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a51",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t51",
+            "text": "did task 51 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 106,
+      "message": {
+        "type": "user",
+        "id": "msg_u52",
+        "text": "task 52 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 107,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a52",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t52",
+            "text": "did task 52 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 108,
+      "message": {
+        "type": "user",
+        "id": "msg_u53",
+        "text": "task 53 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 109,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a53",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t53",
+            "text": "did task 53 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 110,
+      "message": {
+        "type": "user",
+        "id": "msg_u54",
+        "text": "task 54 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 111,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a54",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t54",
+            "text": "did task 54 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 112,
+      "message": {
+        "type": "user",
+        "id": "msg_u55",
+        "text": "task 55 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 113,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a55",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t55",
+            "text": "did task 55 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 114,
+      "message": {
+        "type": "user",
+        "id": "msg_u56",
+        "text": "task 56 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 115,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a56",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t56",
+            "text": "did task 56 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 116,
+      "message": {
+        "type": "user",
+        "id": "msg_u57",
+        "text": "task 57 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 117,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a57",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t57",
+            "text": "did task 57 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 118,
+      "message": {
+        "type": "user",
+        "id": "msg_u58",
+        "text": "task 58 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 119,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a58",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t58",
+            "text": "did task 58 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    },
+    {
+      "seq": 120,
+      "message": {
+        "type": "user",
+        "id": "msg_u59",
+        "text": "task 59 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "time": 0
+      }
+    },
+    {
+      "seq": 121,
+      "message": {
+        "type": "assistant",
+        "id": "msg_a59",
+        "agent": "build",
+        "model": {
+          "id": "test-model",
+          "providerID": "openai"
+        },
+        "content": [
+          {
+            "type": "text",
+            "id": "p_t59",
+            "text": "did task 59 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "time": {
+          "created": 0,
+          "completed": 0
+        }
+      }
+    }
+  ]
+}
