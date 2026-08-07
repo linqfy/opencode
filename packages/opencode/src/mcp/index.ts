@@ -637,7 +637,12 @@ const layer = Layer.effect(
         return result.status
       }
 
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, result.instructions, mcp.timeout)
+      const stored = yield* storeClient(s, name, result.mcpClient, result.defs!, result.instructions, mcp.timeout)
+      // A server added or reconnected at runtime must notify open Locations so the
+      // Location-scoped tool registry re-syncs; only watch() and connection-close
+      // previously published ToolsChanged.
+      yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
+      return stored
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCPV1.Info) {
