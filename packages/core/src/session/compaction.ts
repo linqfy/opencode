@@ -258,10 +258,19 @@ export const CompactionPipeline = {
       recent: selected?.recent ?? "",
       time: { created: yield* DateTime.now },
     })
+    const clearedPartIds = result.clearedPartIds.map((id) => id.replace(/-result$/, ""))
+    // When the resolved model advertises provider-native content-block
+    // deletion, carry the cleared part ids as cache-edit ops on the run result
+    // so the next request can represent deletion without mutating history text
+    // (which would bust the Anthropic prefix cache). The durable cleared state
+    // above is identical either way; only the wire representation differs.
     return {
       summaryMessage,
-      clearedPartIds: result.clearedPartIds.map((id) => id.replace(/-result$/, "")),
+      clearedPartIds,
       checkpoint: result.checkpoint,
+      ...(input.model.compatibility?.cacheEdit === true
+        ? { cacheEdit: { kind: "cache-edit", partIds: clearedPartIds } }
+        : {}),
     }
   }),
 }

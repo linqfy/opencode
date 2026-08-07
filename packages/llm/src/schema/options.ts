@@ -168,6 +168,11 @@ export type ModelToolSchemaCompatibility = Schema.Schema.Type<typeof ModelToolSc
 
 export class ModelCompatibility extends Schema.Class<ModelCompatibility>("LLM.ModelCompatibility")({
   toolSchema: Schema.optional(ModelToolSchemaCompatibility),
+  // Provider-native content-block deletion. When true, the compaction
+  // controller emits cache-edit ops alongside the cleared state so the next
+  // request can represent deletion provider-natively instead of mutating
+  // history text (which would bust the Anthropic prefix cache).
+  cacheEdit: Schema.optional(Schema.Boolean),
 }) {}
 
 export namespace ModelCompatibility {
