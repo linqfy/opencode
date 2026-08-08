@@ -12,7 +12,8 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { createInterface } from "node:readline"
 
-const RUNS = Number(process.env.BASELINE_RUNS ?? "3")
+const parsedRuns = Number(process.env.BASELINE_RUNS)
+const RUNS = Number.isInteger(parsedRuns) && parsedRuns > 0 ? parsedRuns : 3
 
 const LISTENING_MARKER = "opencode server listening on http://"
 const STARTUP_TIMEOUT_MS = 60_000
@@ -42,7 +43,7 @@ async function measureStartup(): Promise<number[]> {
     await waitForListening(child, LISTENING_MARKER, STARTUP_TIMEOUT_MS)
     samples.push(Date.now() - started)
     child.kill("SIGTERM")
-    if (child.exitCode === null) await new Promise<void>((resolve) => child.once("exit", () => resolve()))
+    await waitForExit(child, 5_000)
   }
   return samples
 }
@@ -81,7 +82,15 @@ async function measureSidecarSpawn(): Promise<number[]> {
 function waitForListening(child: ChildProcess, marker: string, timeoutMs: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const lines = createInterface({ input: child.stdout! })
+    const onError = (error: Error) => {
+      clearTimeout(timer)
+      lines.close()
+      child.off("error", onError)
+      reject(error)
+    }
     const timer = setTimeout(() => {
+      lines.close()
+      child.off("error", onError)
       reject(new Error(`startup timed out waiting for "${marker}"`))
       child.kill("SIGTERM")
     }, timeoutMs)
@@ -89,10 +98,26 @@ function waitForListening(child: ChildProcess, marker: string, timeoutMs: number
       if (line.includes(marker)) {
         clearTimeout(timer)
         lines.close()
+        child.off("error", onError)
         resolve()
       }
     })
-    child.once("error", reject)
+    child.once("error", onError)
+  })
+}
+
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(() => {
+      child.off("exit", onExit)
+      resolve()
+    }, timeoutMs)
+    child.once("exit", onExit)
   })
 }
 

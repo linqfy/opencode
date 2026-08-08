@@ -67,7 +67,7 @@ export namespace TaskSchedulerAdapter {
   }
 
   export interface Cancellation {
-    readonly state: "cancelled" | "cancellation_pending"
+    readonly state: "cancelled" | "cancellation_pending" | "budget_exhausted"
   }
 }
 

@@ -72,7 +72,7 @@ export type ReadApi = {
     workspaceDirectory: string
     reason: string
     idempotencyKey: string
-  }) => ReturnType<ReadClient["cancelTask"]>
+  }) => Promise<TaskSchedulerAdapter.Cancellation>
   readonly listMemoryRecords: (input: { limit?: number }) => ReturnType<ReadClient["listMemoryRecords"]>
   readonly getMemoryRecord: (input: { threadId: string }) => ReturnType<ReadClient["getMemoryRecord"]>
   readonly deleteMemoryRecord: (input: { threadId: string }) => ReturnType<ReadClient["deleteMemoryRecord"]>

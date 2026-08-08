@@ -88,4 +88,11 @@ describe("budget", () => {
 
     expect(result).toEqual({ ok: true, value: { ...budget(), synthesisSpent: 90 } })
   })
+
+  test("treats a budget-exhausted child as terminal for synthesis and reclamation", () => {
+    const children = ["budget_exhausted"] as const
+
+    expect(spendSynthesisBudget(budget(), 90, children)).toEqual({ ok: true, value: { ...budget(), synthesisSpent: 90 } })
+    expect(reclaimUnusedChildBudget(budget(), children)).toEqual({ ok: true, value: { ...budget(), childReclaimed: 270 } })
+  })
 })

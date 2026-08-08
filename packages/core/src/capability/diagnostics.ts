@@ -81,7 +81,10 @@ const layer = Layer.effect(
             cache_hit_rate: cacheHitRate({ input: input.usage.input, cacheRead: input.usage.cache.read }),
           })
           .run()
-          .pipe(Effect.asVoid, Effect.orDie),
+          .pipe(
+            Effect.asVoid,
+            Effect.catch((error) => Effect.logError("Failed to persist step usage", { error })),
+          ),
       listStepUsage: (input) =>
         Effect.gen(function* () {
           const limit = Math.min(200, Math.max(1, input.limit ?? 100))

@@ -562,6 +562,7 @@ export function createTaskSchedulerAdapter(input: {
     cancel: (request) =>
       Effect.gen(function* () {
         const task = yield* Effect.promise(() => input.scheduler.getTask(request.rootId, request.taskId))
+        if (task.state === "budget_exhausted") return { state: "budget_exhausted" } as const
         if (["completed", "failed", "cancelled"].includes(task.state)) return { state: "cancelled" } as const
         yield* Effect.promise(() =>
           input.scheduler.requestCancellation(

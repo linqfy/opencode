@@ -73,4 +73,26 @@ describe("SessionDiagnostics", () => {
       expect(second.nextCursor).toBeNull()
     }),
   )
+
+  it.effect("a failed diagnostics write does not fail the step run", () =>
+    Effect.gen(function* () {
+      const { db } = yield* Database.Service
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: ProjectV2.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .onConflictDoNothing()
+        .run()
+        .pipe(Effect.orDie)
+      const diagnostics = yield* SessionDiagnostics.Service
+      // ses_diag_missing has no SessionTable row, so the FK insert fails.
+      yield* diagnostics.record({
+        sessionID: "ses_diag_missing",
+        assistantMessageID: "msg_1",
+        providerID: "openai",
+        modelID: "gpt-4o-mini",
+        profileID: "openai-chat:openai/gpt-4o-mini",
+        usage: { input: 100, output: 20, reasoning: 5, cache: { read: 900, write: 50 } },
+      })
+    }),
+  )
 })

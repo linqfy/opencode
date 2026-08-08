@@ -59,7 +59,7 @@ class FakeEventClient implements SchedulerEventClient {
 
   async cancelTask(rootId: string, taskId: string, _workspaceDirectory: string, reason: string, idempotencyKey: string) {
     const task = this.task(rootId, taskId)
-    if (["completed", "failed", "cancelled"].includes(task.state)) return { state: "cancelled" as const }
+    if (["completed", "failed", "cancelled", "budget_exhausted"].includes(task.state)) return { state: "cancelled" as const }
     await this.proposeCommit(idempotencyKey, {
       kind: "task-cancellation-requested",
       data: { root_id: rootId, task_id: taskId, reason },
@@ -271,6 +271,25 @@ describe("scheduler cancellation dispatch", () => {
     const kinds = client.events.map((event) => event.kind.kind)
     expect(kinds.indexOf("task-cancellation-observed")).toBeGreaterThan(kinds.indexOf("task-cancellation-requested"))
     expect(kinds.indexOf("task-deliverable-committed")).toBeGreaterThan(kinds.indexOf("task-cancellation-observed"))
+  })
+
+  test("short-circuits cancelling an already budget-exhausted task without journaling a cancellation", async () => {
+    const terminal = await Effect.runPromise(Deferred.make<SessionExecution.TerminalRunResult, never>())
+    const { client, adapter, interrupted, supervisionStarted } = harness(terminal)
+
+    const handle = await Effect.runPromise(adapter.schedule(request))
+    await supervisionStarted
+
+    const task = client.tasks.find((item) => item.task_id === handle.taskId)
+    expect(task).toBeDefined()
+    task!.state = "budget_exhausted"
+
+    await expect(
+      Effect.runPromise(adapter.cancel({ rootId: handle.rootId, taskId: handle.taskId, reason: "user stopped" })),
+    ).resolves.toEqual({ state: "budget_exhausted" })
+
+    expect(interrupted).toEqual([])
+    expect(client.events.find((event) => event.kind.kind === "task-cancellation-requested")).toBeUndefined()
   })
 
   test("degrades to the sidecar cancel_task call when no adapter is available", async () => {

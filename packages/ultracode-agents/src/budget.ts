@@ -90,5 +90,7 @@ function isNonNegativeInteger(value: number) {
 }
 
 function allChildrenTerminal(states: readonly TaskState[]) {
-  return states.every((state) => state === "completed" || state === "failed" || state === "cancelled")
+  return states.every(
+    (state) => state === "completed" || state === "failed" || state === "cancelled" || state === "budget_exhausted",
+  )
 }
