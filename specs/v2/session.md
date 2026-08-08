@@ -120,6 +120,60 @@ Repeated compactions update the previous structured summary with newly compacted
 
 When a provider rejects a request as context overflow before durable assistant output or tool execution, the runner attempts one overflow-triggered compaction even when the local estimate did not predict pressure. A completed checkpoint rebuilds the same logical provider turn with one remaining physical attempt. A second overflow, unavailable compaction, or overflow after durable output becomes the ordinary terminal failure; recovery never loops or replays partial side effects. Deterministic old tool-result pruning remains a separate follow-up.
 
+## Capability Profiles at Runtime
+
+The runner resolves a `CapabilityProfile` per (route, model) through the pure `Profile`
+module (`packages/core/src/capability/profile.ts`). `Profile.resolve(model, { ttlSeconds? })`
+seeds the profile from the route family and default limits, applies a caching layer
+(`mode: "auto"`, `breakpointLimit: 1`, optional ttl), and returns a deterministic
+`profileId` (`${route.id}:${provider}/${model.id}`) plus a `known` flag.
+
+When the route carries no capability signal (`known: false`), the runner leaves the
+request byte-identical to today: no cache policy override, no generation clamp, no
+compaction-buffer override — the conservative profile only feeds the recorded profile id.
+When `known: true`:
+
+- `profileCachePolicy(profile)` maps `caching.mode` to the request `cache` policy
+  (`tools`/`system`/`latest-user-message` placement, with the profile ttl passed through so
+  the llm package can emit the Anthropic 1h tier for scheduler children).
+- Generation is clamped to `min(profile.outputTokens, route default generation max, limits remaining)`.
+- The compaction buffer becomes `profile.outputTokens` (the profile-driven reserve).
+
+`Profile.resolve` is deterministic over the resolved model; the runner persists the same
+`profileId` per step in diagnostics.
+
+## Budget Spine
+
+The DAG child-pool budget is the single numeric source for a child's execution cap.
+`deriveExecutionLimits(task)` derives the runner's supervise `Limits.maxTokens` solely from
+the durable task budget; the request's own `maxTokens` only gates the root spawn reserve.
+When a child finishes, its actual spend is recorded on the root via `useChildBudget`
+(`root.budget_used` becomes the single spend audit), while per-child returned reservation
+is reclaimed via `reclaimChildBudget`; `validateSpawn` skips terminal siblings so a
+released child's reservation is never double counted against the parent pool.
+
+`budget_exhausted` is a first-class terminal task state: it joins the terminal set in
+`TaskState`, `DeliverableInput.status`, `isTerminal`, the opencode scheduler's
+`terminalTaskState`, and every sidecar terminal/transition gate (task-state transitions,
+budget use/reclaim/cancellation, deliverable acceptance, `terminal_details`). A
+`budget_exhausted` deliverable carries the child's manifest summary (e.g. "child pool
+depleted").
+
+## Diagnostics
+
+Per-step usage is recorded at each `Step.Ended` into the core SQLite `step_usage` table
+beside `SessionTable` (session data is owned by the core session journal until RUN-13/A2;
+the sidecar does not own session steps). `SessionDiagnostics.Service` writes the row
+(assistant message id, provider/model ids, resolved `profileId`, token breakdown, and the
+`cacheHitRate = cacheRead / (input + cacheRead)` share) and serves it paged:
+
+```
+GET /experimental/authority/sessions/:sessionId/diagnostics?cursor=&limit=
+→ { rows: StepUsageRow[], next_cursor: number | null }
+```
+
+Paging is cursor-based (`next_cursor` is the last row id; null when no more pages).
+
 ## V1 Runtime Context Parity
 
 This is the canonical checklist for model-visible runtime context still needed before the V2 runner replaces V1. Keep each behavior in its owning boundary rather than treating all model-visible text as a durable Context Source. Update this table in the PR that changes a status.
