@@ -329,6 +329,15 @@ export function createTaskSchedulerAdapter(input: {
         }),
       )
       const task = yield* Effect.promise(() => input.scheduler.getTask(state.rootId, state.taskId))
+      if (terminal.usage.tokens > 0)
+        yield* Effect.promise(() =>
+          input.scheduler.useChildBudget({
+            key: `task:${state.rootId}:${state.taskId}:budget-used`,
+            rootId: state.rootId,
+            taskId: state.rootId,
+            amount: terminal.usage.tokens,
+          }),
+        )
       if (terminal.usage.tokens <= task.budget)
         yield* Effect.promise(() =>
           input.scheduler.reclaimChildBudget({
@@ -429,7 +438,7 @@ export function createTaskSchedulerAdapter(input: {
           }),
         )
         const durable = yield* Effect.promise(() => input.scheduler.getTask(rootId, taskId))
-        const executionCap = Math.min(childCap, durable.budget)
+        const executionCap = deriveExecutionLimits(durable).maxTokens
         const recovering = durable.state === "running"
         if (!recovering)
           yield* Effect.promise(() => input.scheduler.admit(rootId, taskId, `task:${rootId}:${taskId}:admit`))
@@ -623,14 +632,17 @@ function childTaskID(rootId: string, request: TaskSchedulerAdapter.Input) {
   return `task_${encodeID(`${rootId}\0${request.agent.name}\0${request.description}\0${request.brief}`)}`
 }
 
+export const deriveExecutionLimits = (task: { readonly budget: number }) => ({ maxTokens: task.budget })
+
 function terminalTaskState(status: SessionExecution.TerminalRunResult["status"]) {
   if (status === "completed") return "completed" as const
   if (status === "cancelled") return "cancelled" as const
+  if (status === "budget_exhausted") return "budget_exhausted" as const
   return "failed" as const
 }
 
 function terminalResult(terminal: SessionExecution.TerminalRunResult): {
-  readonly status: "completed" | "failed" | "cancelled"
+  readonly status: "completed" | "failed" | "cancelled" | "budget_exhausted"
   readonly evidence: TaskSchedulerAdapter.Evidence
 } {
   const evidence = {

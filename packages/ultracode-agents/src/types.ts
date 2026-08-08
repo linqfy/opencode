@@ -1,6 +1,6 @@
 import type { TaskDeliverable } from "./events-client"
 
-export type TaskState = "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled"
+export type TaskState = "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "budget_exhausted"
 
 export type ForkMode = "none" | "recent" | "full"
 
@@ -35,7 +35,7 @@ export type Result<Value, Error extends string> =
 
 export type TaskTerminalOutcome = {
   readonly taskId: string
-  readonly state: "completed" | "failed" | "cancelled"
+  readonly state: "completed" | "failed" | "cancelled" | "budget_exhausted"
   readonly deliverable?: TaskDeliverable
 }
 

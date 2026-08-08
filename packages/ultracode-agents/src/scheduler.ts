@@ -37,7 +37,7 @@ export interface DeliverableInput {
   readonly taskId: string
   readonly stateKey: string
   readonly deliverableKey: string
-  readonly status: "completed" | "failed" | "cancelled"
+  readonly status: "completed" | "failed" | "cancelled" | "budget_exhausted"
   readonly manifest: EvidenceManifest
 }
 
@@ -273,8 +273,8 @@ function validateSpawn(input: SpawnInput, tasks: readonly TaskRecord[]) {
     if (input.task.depth !== parent.depth + 1) throw new Error("invalid_parent_depth")
     if (tasks.filter((task) => task.parent_task_id === input.task.parentId).length >= MAX_CHILDREN) throw new Error("max_children_exceeded")
     const childBudget = tasks
-      .filter((task) => task.parent_task_id === input.task.parentId)
-      .reduce((total, task) => total + task.budget - (task.budget_reclaimed ?? 0), input.budget.total)
+      .filter((task) => task.parent_task_id === input.task.parentId && !isTerminal(task.state as TaskState))
+      .reduce((total, task) => total + task.budget, input.budget.total)
     if (childBudget > parent.reserved_child_pool - parent.budget_used) throw new Error("child_budget_exhausted")
   }
   if (!input.task.dependencyIds.every((dependency) => tasks.some((task) => task.task_id === dependency))) {
@@ -332,8 +332,8 @@ function stateChanged(rootId: string, taskId: string, state: TaskState, reason: 
   }
 }
 
-function isTerminal(state: TaskState): state is "completed" | "failed" | "cancelled" {
-  return state === "completed" || state === "failed" || state === "cancelled"
+function isTerminal(state: TaskState): state is "completed" | "failed" | "cancelled" | "budget_exhausted" {
+  return state === "completed" || state === "failed" || state === "cancelled" || state === "budget_exhausted"
 }
 
 function toTask(task: TaskRecord): Task {

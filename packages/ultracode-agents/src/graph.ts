@@ -21,7 +21,7 @@ export function transitionTaskState(from: TaskState, to: TaskState): Result<Task
   if (
     (from === "pending" && (to === "running" || to === "waiting" || to === "cancelled")) ||
     (from === "waiting" && (to === "pending" || to === "cancelled")) ||
-    (from === "running" && (to === "completed" || to === "failed" || to === "cancelled"))
+    (from === "running" && (to === "completed" || to === "failed" || to === "cancelled" || to === "budget_exhausted"))
   ) {
     return { ok: true, value: to }
   }

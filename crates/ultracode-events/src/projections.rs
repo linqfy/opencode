@@ -173,7 +173,11 @@ fn terminal_details(
     reason: Option<String>,
     cancellation_observed: bool,
 ) -> Option<TaskTerminal> {
-    matches!(state.as_str(), "completed" | "failed" | "cancelled").then_some(TaskTerminal {
+    matches!(
+        state.as_str(),
+        "completed" | "failed" | "cancelled" | "budget_exhausted"
+    )
+    .then_some(TaskTerminal {
         state,
         reason,
         cancellation_observed,

@@ -649,12 +649,12 @@ describe("durable task scheduler adapter", () => {
       evidence: { summary: "implemented bounded result", artifactIds: ["artifact-result"], changedPaths: ["src/result.ts"] },
     })
     expect(JSON.stringify(handle)).not.toContain("transcript")
-    expect(sidecar.events.map((event) => event.kind.kind)).not.toContain("task-budget-used")
+    expect(sidecar.events.map((event) => event.kind.kind)).toContain("task-budget-used")
     expect(sidecar.events.map((event) => event.kind.kind)).toContain("task-budget-reclaimed")
     expect(sidecar.deliverables).toEqual([expect.objectContaining({ task_id: handle.taskId, status: "completed" })])
     expect(sidecar.events.map((event) => event.kind.kind).slice(-5)).toEqual([
-      "task-state-changed",
       "task-deliverable-committed",
+      "task-budget-used",
       "task-budget-reclaimed",
       "mailbox-message-sent",
       "worktree-released",

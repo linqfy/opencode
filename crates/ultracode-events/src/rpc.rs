@@ -1176,7 +1176,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
                 (current.as_str(), state.as_str()),
                 ("pending", "running" | "waiting" | "cancelled")
                     | ("waiting", "pending" | "cancelled")
-                    | ("running", "completed" | "failed" | "cancelled")
+                    | ("running", "completed" | "failed" | "cancelled" | "budget_exhausted")
             ) {
                 return Err(format!(
                     "invalid task-state transition: {current} -> {state}"
@@ -1215,7 +1215,10 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             let Some((_, pool, _)) = task.reservation else {
                 return Err("task budget is not reserved".into());
             };
-            if matches!(task.state.as_str(), "completed" | "failed" | "cancelled")
+            if matches!(
+                task.state.as_str(),
+                "completed" | "failed" | "cancelled" | "budget_exhausted"
+            )
                 || task
                     .used
                     .checked_add(*amount)
@@ -1232,7 +1235,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
         } => {
             let task = journal_task(journal, root_id, task_id)?;
             if target != "child-pool"
-                || !matches!(task.state.as_str(), "completed" | "failed" | "cancelled")
+                || !matches!(task.state.as_str(), "completed" | "failed" | "cancelled" | "budget_exhausted")
                 || *amount > task.budget.saturating_sub(task.reclaimed)
             {
                 return Err("invalid task child-pool reclaim".into());
@@ -1243,7 +1246,7 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
         } => {
             if matches!(
                 journal_task(journal, root_id, task_id)?.state.as_str(),
-                "completed" | "failed" | "cancelled"
+                "completed" | "failed" | "cancelled" | "budget_exhausted"
             ) {
                 return Err("task is terminal".into());
             }
@@ -1344,7 +1347,10 @@ fn validate_task_event_from_journal(journal: &TaskJournal, kind: &EventKind) -> 
             ..
         } => {
             let state = &journal_task(journal, root_id, task_id)?.state;
-            if !matches!(state.as_str(), "completed" | "failed" | "cancelled") {
+            if !matches!(
+                state.as_str(),
+                "completed" | "failed" | "cancelled" | "budget_exhausted"
+            ) {
                 return Err(format!(
                     "task deliverable requires terminal task: {task_id}"
                 ));
@@ -1503,7 +1509,7 @@ fn validate_task_event(projections: &ProjectionStore, kind: &EventKind) -> Resul
                 (current.as_str(), state.as_str()),
                 ("pending", "running" | "waiting" | "cancelled")
                     | ("waiting", "pending" | "cancelled")
-                    | ("running", "completed" | "failed" | "cancelled")
+                    | ("running", "completed" | "failed" | "cancelled" | "budget_exhausted")
             );
             if !valid {
                 return Err(format!(
@@ -1586,7 +1592,10 @@ fn validate_task_event(projections: &ProjectionStore, kind: &EventKind) -> Resul
             root_id, task_id, ..
         } => {
             let state = require_task(projections, root_id, task_id)?;
-            if !matches!(state.as_str(), "completed" | "failed" | "cancelled") {
+            if !matches!(
+                state.as_str(),
+                "completed" | "failed" | "cancelled" | "budget_exhausted"
+            ) {
                 return Err(format!(
                     "task deliverable requires terminal task: {task_id}"
                 ));
@@ -2671,6 +2680,49 @@ mod tests {
             .len(),
             100
         );
+        let _ = std::fs::remove_dir_all(journal.parent().unwrap());
+    }
+
+    #[test]
+    fn budget_exhausted_is_terminal_and_allows_reclaim_and_deliverable() {
+        let (journal, db, blobs) = dirs("task-budget-exhausted-terminal");
+        let mut state = SidecarState::open(&journal, &db, &blobs, "ses_1").unwrap();
+        let commit = |state: &mut SidecarState, key: &str, kind: Value| {
+            handle_request(
+                state,
+                &req(1, "propose_commit", json!({ "key": key, "kind": kind })),
+            )
+        };
+        assert!(commit(&mut state, "root", json!({ "kind": "task-spawned", "data": {
+            "root_id": "root", "task_id": "root-task", "parent_task_id": null, "depth": 0,
+            "state_changing": false, "dependencies": [], "budget": 100, "workspace_directory": "C:\\workspace"
+        }})).error.is_none());
+        assert!(commit(&mut state, "root-budget", json!({ "kind": "task-budget-reserved", "data": {
+            "root_id": "root", "task_id": "root-task", "parent": 60, "child_pool": 30, "synthesis": 10
+        }})).error.is_none());
+        assert!(commit(&mut state, "child", json!({ "kind": "task-spawned", "data": {
+            "root_id": "root", "task_id": "child-a", "parent_task_id": "root-task", "depth": 1,
+            "state_changing": true, "dependencies": [], "budget": 20
+        }})).error.is_none());
+        assert!(commit(&mut state, "reserve-child", json!({ "kind": "task-budget-reserved", "data": {
+            "root_id": "root", "task_id": "child-a", "parent": 12, "child_pool": 6, "synthesis": 2
+        }})).error.is_none());
+        assert!(commit(&mut state, "to-running", json!({ "kind": "task-state-changed", "data": {
+            "root_id": "root", "task_id": "child-a", "state": "running", "reason": null
+        }})).error.is_none());
+        assert!(commit(&mut state, "to-budget-exhausted", json!({ "kind": "task-state-changed", "data": {
+            "root_id": "root", "task_id": "child-a", "state": "budget_exhausted", "reason": "child_pool depleted"
+        }})).error.is_none());
+        assert!(commit(&mut state, "reclaim", json!({ "kind": "task-budget-reclaimed", "data": {
+            "root_id": "root", "task_id": "child-a", "amount": 10, "target": "child-pool"
+        }})).error.is_none());
+        assert!(commit(&mut state, "deliverable", json!({ "kind": "task-deliverable-committed", "data": {
+            "root_id": "root", "task_id": "child-a", "status": "budget_exhausted", "summary": "pool depleted",
+            "artifact_ids": [], "changed_paths": [], "test_summary": null
+        }})).error.is_none());
+        assert!(commit(&mut state, "reclaim-after-terminal", json!({ "kind": "task-budget-used", "data": {
+            "root_id": "root", "task_id": "child-a", "amount": 1, "target": "child-pool"
+        }})).error.unwrap().contains("exceeded"));
         let _ = std::fs::remove_dir_all(journal.parent().unwrap());
     }
 }
