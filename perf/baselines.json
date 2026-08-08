@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-08-08T17:50:38.001Z",
+  "reference_machine": "docs/benchmarks/environment.json",
+  "startup_ms": {
+    "runs": 3,
+    "p50": 5574,
+    "p95": 5698
+  },
+  "session_open_ttft_ms": {
+    "runs": 3,
+    "p50": 48,
+    "p95": 138
+  },
+  "idle_memory_after_sessions_mb": {
+    "runs": 3,
+    "p50": 197.296875,
+    "p95": 199.203125
+  },
+  "sidecar_spawn_ms": {
+    "runs": 3,
+    "p50": 11,
+    "p95": 12
+  }
+}
