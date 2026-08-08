@@ -101,7 +101,7 @@ const replacementModel = Model.make({ id: "replacement", provider: "fake", route
 const compactModel = Model.make({
   id: "compact",
   provider: "fake",
-  route: OpenAIChat.route.with({ limits: { context: 4_000, output: 50 } }),
+  route: OpenAIChat.route.with({ limits: { context: 4_000, output: 2_000 } }),
 })
 const recoveryModel = Model.make({
   id: "recovery",
@@ -1192,7 +1192,7 @@ describe("SessionRunnerLLM", () => {
       response = fragmentFixture("text", "text-first", ["Earlier answer"]).completeEvents
       yield* session.prompt({
         sessionID,
-        prompt: Prompt.make({ text: "Earlier question ".repeat(180) }),
+        prompt: Prompt.make({ text: "Earlier question ".repeat(250) }),
         resume: false,
       })
       yield* session.resume(sessionID)
