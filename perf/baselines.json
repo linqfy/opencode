@@ -1,24 +1,24 @@
 {
-  "captured_at": "2026-08-08T17:52:24.518Z",
+  "captured_at": "2026-08-08T18:19:15.172Z",
   "reference_machine": "docs/benchmarks/environment.json",
   "startup_ms": {
     "runs": 3,
-    "p50": 5446,
-    "p95": 5737
+    "p50": 5804,
+    "p95": 5880
   },
   "session_open_ttft_ms": {
     "runs": 3,
-    "p50": 50,
-    "p95": 160
+    "p50": 59,
+    "p95": 162
   },
   "idle_memory_after_sessions_mb": {
     "runs": 3,
-    "p50": 193.3359375,
-    "p95": 194.7421875
+    "p50": 202.86328125,
+    "p95": 204.546875
   },
   "sidecar_spawn_ms": {
     "runs": 3,
-    "p50": 13,
+    "p50": 7,
     "p95": 15
   }
 }
