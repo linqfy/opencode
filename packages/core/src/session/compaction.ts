@@ -76,6 +76,7 @@ type Input = {
   readonly model: Model
   readonly request: LLMRequest
   readonly contextEpoch: number
+  readonly buffer?: number
 }
 
 const estimate = (value: unknown) => Token.estimate(JSON.stringify(value))
@@ -372,7 +373,7 @@ export const make = (dependencies: Dependencies) => {
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
     if (
       estimate({ system: input.request.system, messages: input.request.messages, tools: input.request.tools }) <=
-      context - Math.max(output, config.buffer)
+      context - Math.max(output, input.buffer ?? config.buffer)
     )
       return false
     return yield* compactAfterOverflow(input)

@@ -176,9 +176,19 @@ export function narrowProfile(base: CapabilityProfile, layer: ProfileLayer): Cap
         break
       case "caching": {
         const layerCache = value as ProfileLayer
-        if (layerCache.mode) out.caching.mode = stricter(out.caching.mode, String(layerCache.mode), CACHE_STRICTNESS) as typeof out.caching.mode
-        if (layerCache.ttlSeconds !== undefined && out.caching.ttlSeconds !== undefined) out.caching.ttlSeconds = Math.min(out.caching.ttlSeconds, Number(layerCache.ttlSeconds))
-        if (layerCache.breakpointLimit !== undefined) out.caching.breakpointLimit = Math.min(out.caching.breakpointLimit, Number(layerCache.breakpointLimit))
+        const undecorated = out.caching.mode === "none" && out.caching.breakpointLimit === 0 && out.caching.ttlSeconds === undefined
+        if (layerCache.mode)
+          out.caching.mode = (undecorated
+            ? String(layerCache.mode)
+            : stricter(out.caching.mode, String(layerCache.mode), CACHE_STRICTNESS)) as typeof out.caching.mode
+        if (layerCache.ttlSeconds !== undefined)
+          out.caching.ttlSeconds = undecorated
+            ? Number(layerCache.ttlSeconds)
+            : Math.min(out.caching.ttlSeconds ?? Number(layerCache.ttlSeconds), Number(layerCache.ttlSeconds))
+        if (layerCache.breakpointLimit !== undefined)
+          out.caching.breakpointLimit = undecorated
+            ? Number(layerCache.breakpointLimit)
+            : Math.min(out.caching.breakpointLimit, Number(layerCache.breakpointLimit))
         break
       }
       case "quirks":
@@ -217,7 +227,7 @@ export function seedProfile(layer: ProfileLayer): CapabilityProfile {
 // Resolution order (spec section 6): adapter declaration, configured endpoint
 // profile, model catalog metadata, administrator/user overrides, safe runtime
 // discovery. The adapter layer declares the ceiling; every later layer narrows.
-export function resolveProfile(layers: ProfileLayer[]): CapabilityProfile {
+export function resolveProfile(layers: readonly ProfileLayer[]): CapabilityProfile {
   if (layers.length === 0) return CONSERVATIVE_PROFILE
   let profile = typeof layers[0].family === "string" ? seedProfile(layers[0]) : CONSERVATIVE_PROFILE
   const rest = typeof layers[0].family === "string" ? layers.slice(1) : layers

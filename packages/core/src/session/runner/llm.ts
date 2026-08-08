@@ -41,6 +41,8 @@ import { MAX_STEPS_PROMPT } from "./max-steps"
 import { Snapshot } from "../../snapshot"
 import { makeLocationNode } from "../../effect/app-node"
 import { llmClient } from "../../effect/app-node-platform"
+import { profileCachePolicy } from "@ultracode/schema/capability"
+import { Profile } from "../../capability/profile"
 
 /**
  * Runs one durable coding-agent Session until it settles.
@@ -238,6 +240,11 @@ const layer = Layer.effect(
       const system =
         initialized ?? (yield* SessionContextEpoch.prepare(db, events, loadSystemContext(agent), session.id))
       const model = yield* models.resolve(session)
+      const resolvedProfile = Profile.resolve(model, {
+        ttlSeconds: agent.id.startsWith("scheduler_") ? 3600 : undefined,
+      })
+      const profile = resolvedProfile.profile
+      const known = resolvedProfile.known
       const entries = yield* SessionHistory.entriesForRunner(db, session.id, system.baselineSeq)
       const context = entries.map((entry) => entry.message)
       const isLastStep = agent.info?.steps !== undefined && currentStep >= agent.info.steps
@@ -249,9 +256,19 @@ const layer = Layer.effect(
       })
       const toolMaterialization = yield* materializeTools(agent.info?.permissions, query, isLastStep, memo)
       const promptCacheKey = /^ses_[0-9a-f]{64}$/.test(session.id) ? session.id.slice(4) : session.id
+      const reserveCap = known
+        ? Math.min(profile.outputTokens, model.route.defaults?.generation?.maxTokens ?? Number.POSITIVE_INFINITY)
+        : Number.POSITIVE_INFINITY
+      const generation =
+        limits !== undefined
+          ? { maxTokens: Math.min(reserveCap, limits.maxTokens - limits.tokens) }
+          : known
+            ? { maxTokens: reserveCap }
+            : undefined
       const request = LLM.request({
         model,
-        ...(limits ? { generation: { maxTokens: limits.maxTokens - limits.tokens } } : {}),
+        ...(generation === undefined ? {} : { generation }),
+        ...(known ? { cache: profileCachePolicy(profile) } : {}),
         providerOptions: { openai: { promptCacheKey } },
         system: [agent.info?.system, system.baseline]
           .filter((part): part is string => part !== undefined && part.length > 0)
@@ -266,6 +283,7 @@ const layer = Layer.effect(
           entries,
           model,
           request,
+          ...(known ? { buffer: profile.outputTokens } : {}),
           contextEpoch: system.baselineSeq,
         })
       )

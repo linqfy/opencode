@@ -26,6 +26,13 @@ describe("capability profile contract (locked for runtime consumption)", () => {
     expect(narrowed.caching.ttlSeconds).toBe(300)
   })
 
+  test("a caching layer declares mode and ttl onto the undecorated conservative base", () => {
+    const declared = narrowProfile(CONSERVATIVE_PROFILE, { caching: { mode: "auto", breakpointLimit: 1, ttlSeconds: 3600 } })
+    expect(declared.caching.mode).toBe("auto")
+    expect(declared.caching.breakpointLimit).toBe(1)
+    expect(declared.caching.ttlSeconds).toBe(3600)
+  })
+
   test("tools.hosted is not narrowed by later layers", () => {
     const base = { ...anthropicBase, tools: { ...anthropicBase.tools, tools: true, hosted: ["web_search"] } }
     expect(narrowProfile(base, { tools: { hosted: [] } }).tools.hosted).toEqual(["web_search"])
