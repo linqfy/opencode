@@ -1,5 +1,6 @@
 import { SchedulerService } from "@/agent/scheduler-service"
 import { InstanceState } from "@/effect/instance-state"
+import { SessionDiagnostics } from "@opencode-ai/core/capability/diagnostics"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
@@ -66,6 +67,17 @@ export const authorityHandlers = HttpApiBuilder.group(InstanceHttpApi, "authorit
       )
       .handle("plugins", (ctx: { query: typeof AuthorityPageQuery.Type }) =>
         Effect.promise(() => read.replay({ session: ctx.query.sessionId ?? "", sinceSeq: ctx.query.sinceSeq, limit: page(ctx.query) }).then((events) => events.filter((event) => event.kind.includes("tool") || event.kind.includes("plugin")))),
-    )
+      )
+      .handle("stepUsage", (ctx: { params: { sessionId: string }; query: typeof AuthorityPageQuery.Type }) =>
+        Effect.gen(function* () {
+          const diagnostics = yield* SessionDiagnostics.Service
+          const result = yield* diagnostics.listStepUsage({
+            sessionID: ctx.params.sessionId,
+            cursor: ctx.query.cursor === undefined ? undefined : Number(ctx.query.cursor),
+            limit: page(ctx.query),
+          })
+          return { rows: result.rows, next_cursor: result.nextCursor }
+        }),
+      )
   }),
 )

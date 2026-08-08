@@ -43,6 +43,7 @@ import { makeLocationNode } from "../../effect/app-node"
 import { llmClient } from "../../effect/app-node-platform"
 import { profileCachePolicy } from "@ultracode/schema/capability"
 import { Profile } from "../../capability/profile"
+import { SessionDiagnostics } from "../../capability/diagnostics"
 
 /**
  * Runs one durable coding-agent Session until it settles.
@@ -114,6 +115,7 @@ const layer = Layer.effect(
     const referenceGuidance = yield* ReferenceGuidance.Service
     const config = yield* Config.Service
     const snapshots = yield* Snapshot.Service
+    const diagnostics = yield* SessionDiagnostics.Service
     const db = (yield* Database.Service).db
     const checkpointStore = Option.getOrUndefined(yield* Effect.serviceOption(CompactionCheckpointStore.Service))
     const compaction = SessionCompaction.make({
@@ -419,6 +421,16 @@ const layer = Layer.effect(
                 files,
               }),
             )
+            yield* withPublication(
+              diagnostics.record({
+                sessionID: session.id,
+                assistantMessageID: yield* publisher.startAssistant(),
+                providerID: model.provider,
+                modelID: model.id,
+                profileID: resolvedProfile.profileId,
+                usage: stepSettlement.tokens,
+              }),
+            )
           }
           if (publisher.hasProviderError())
             yield* withPublication(publisher.failUnsettledTools("Tool execution interrupted"))
@@ -557,5 +569,6 @@ export const node = makeLocationNode({
     Snapshot.node,
     Database.node,
     CompactionCheckpointStore.node,
+    SessionDiagnostics.node,
   ],
 })

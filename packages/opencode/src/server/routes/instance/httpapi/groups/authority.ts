@@ -62,6 +62,11 @@ export const AuthorityApi = HttpApi.make("authority").add(
       }),
       HttpApiEndpoint.get("providers", `${root}/providers`, { query: AuthorityPageQuery, success: Schema.Unknown }),
       HttpApiEndpoint.get("plugins", `${root}/plugins`, { query: AuthorityPageQuery, success: Schema.Unknown }),
+      HttpApiEndpoint.get("stepUsage", `${root}/sessions/:sessionId/diagnostics`, {
+        params: { sessionId: Schema.String },
+        query: AuthorityPageQuery,
+        success: Schema.Unknown,
+      }),
     )
     .middleware(InstanceContextMiddleware)
     .middleware(WorkspaceRoutingMiddleware)
